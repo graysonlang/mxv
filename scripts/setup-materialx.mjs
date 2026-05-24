@@ -27,8 +27,8 @@ function run(command, commandArgs, options = {}) {
 }
 
 function hasMaterialXShape() {
-  return existsSync(path.join(materialXDir, 'source', 'JsMaterialX')) &&
-    existsSync(path.join(materialXDir, 'libraries'));
+  return existsSync(path.join(materialXDir, 'source', 'JsMaterialX'))
+    && existsSync(path.join(materialXDir, 'libraries'));
 }
 
 mkdirSync(vendorDir, { recursive: true });
