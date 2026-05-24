@@ -16,31 +16,21 @@ const defaultGeometry = 'vendor/MaterialX/resources/Geometry/shaderball.glb';
 const defaultEnvironment = 'vendor/MaterialX/resources/Lights/san_giuseppe_bridge_split.hdr';
 const queryParams = new URLSearchParams(document.location.search);
 const forceWebGL = queryParams.get('renderer') === 'webgl' || queryParams.get('forceWebGL') === '1';
+const appStartTime = performance.now();
 
-const sampleMaterial = `<?xml version="1.0"?>
-<materialx version="1.39" colorspace="lin_rec709">
-  <standard_surface name="SR_webgpu_lab" type="surfaceshader">
-    <input name="base" type="float" value="1.0" />
-    <input name="base_color" type="color3" value="0.72, 0.78, 0.84" />
-    <input name="diffuse_roughness" type="float" value="0.34" />
-    <input name="specular" type="float" value="1" />
-    <input name="specular_color" type="color3" value="1, 1, 1" />
-    <input name="specular_roughness" type="float" value="0.34" />
-    <input name="specular_IOR" type="float" value="1.5" />
-    <input name="metalness" type="float" value="0" />
-    <input name="transmission" type="float" value="0" />
-    <input name="subsurface" type="float" value="0" />
-    <input name="thin_walled" type="boolean" value="false" />
-    <input name="emission" type="float" value="0" />
-    <input name="opacity" type="color3" value="1, 1, 1" />
-  </standard_surface>
-  <surfacematerial name="WebGPULabMaterial" type="material">
-    <input name="surfaceshader" type="surfaceshader" nodename="SR_webgpu_lab" />
-  </surfacematerial>
-</materialx>`;
+const materialState = {
+  baseColor: '#b7c7d7',
+  clearcoat: 0.45,
+  metalness: 0,
+  roughness: 0.34,
+  transmission: 0,
+};
 
 const state = {
   activeStage: 'vertex',
+  mx: null,
+  shaderGenerationTimer: null,
+  shaderRequestId: 0,
   shaderSources: {},
 };
 
@@ -51,6 +41,23 @@ function setText(selector, text) {
 
 function setStatus(text) {
   setText('[data-status]', text);
+}
+
+function setMetric(name, value) {
+  setText(`[data-metric="${name}"]`, value);
+}
+
+function formatDuration(ms) {
+  if (!Number.isFinite(ms)) return '-';
+  if (ms < 10) return `${ms.toFixed(1)} ms`;
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  return `${(ms / 1000).toFixed(2)} s`;
+}
+
+function recordDuration(name, startTime) {
+  const duration = performance.now() - startTime;
+  setMetric(name, formatDuration(duration));
+  return duration;
 }
 
 function setShaderSource(stage) {
@@ -64,6 +71,73 @@ function setShaderSource(stage) {
   });
 }
 
+function formatMaterialFloat(value) {
+  return Number(value).toFixed(3);
+}
+
+function hexToRgbFloats(hex) {
+  const normalized = hex.replace(/^#/, '');
+  const value = Number.parseInt(normalized, 16);
+  return [
+    ((value >> 16) & 255) / 255,
+    ((value >> 8) & 255) / 255,
+    (value & 255) / 255,
+  ];
+}
+
+function createMaterialXSource() {
+  const [r, g, b] = hexToRgbFloats(materialState.baseColor).map(formatMaterialFloat);
+  const roughness = formatMaterialFloat(materialState.roughness);
+  const metalness = formatMaterialFloat(materialState.metalness);
+  const clearcoat = formatMaterialFloat(materialState.clearcoat);
+  const transmission = formatMaterialFloat(materialState.transmission);
+  const coatRoughness = formatMaterialFloat(Math.max(0.04, materialState.roughness * 0.65));
+
+  return `<?xml version="1.0"?>
+<materialx version="1.39" colorspace="lin_rec709">
+  <standard_surface name="SR_webgpu_lab" type="surfaceshader">
+    <input name="base" type="float" value="1.0" />
+    <input name="base_color" type="color3" value="${r}, ${g}, ${b}" />
+    <input name="diffuse_roughness" type="float" value="${roughness}" />
+    <input name="specular" type="float" value="1" />
+    <input name="specular_color" type="color3" value="1, 1, 1" />
+    <input name="specular_roughness" type="float" value="${roughness}" />
+    <input name="specular_IOR" type="float" value="1.5" />
+    <input name="metalness" type="float" value="${metalness}" />
+    <input name="transmission" type="float" value="${transmission}" />
+    <input name="coat" type="float" value="${clearcoat}" />
+    <input name="coat_roughness" type="float" value="${coatRoughness}" />
+    <input name="subsurface" type="float" value="0" />
+    <input name="thin_walled" type="boolean" value="false" />
+    <input name="emission" type="float" value="0" />
+    <input name="opacity" type="color3" value="1, 1, 1" />
+  </standard_surface>
+  <surfacematerial name="WebGPULabMaterial" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="SR_webgpu_lab" />
+  </surfacematerial>
+</materialx>`;
+}
+
+function applyMaterialState(material) {
+  material.color.set(materialState.baseColor);
+  material.roughness = materialState.roughness;
+  material.metalness = materialState.metalness;
+  material.clearcoat = materialState.clearcoat;
+  material.clearcoatRoughness = Math.max(0.04, materialState.roughness * 0.65);
+  material.transmission = materialState.transmission;
+  material.opacity = materialState.transmission > 0 ? Math.max(0.28, 1 - materialState.transmission * 0.48) : 1;
+  material.transparent = materialState.transmission > 0;
+  material.needsUpdate = true;
+}
+
+function scheduleShaderRegeneration() {
+  if (!state.mx) return;
+  clearTimeout(state.shaderGenerationTimer);
+  state.shaderGenerationTimer = setTimeout(() => {
+    regenerateShaderSource();
+  }, 160);
+}
+
 function bindShaderTabs() {
   document.querySelectorAll('[data-stage]').forEach((button) => {
     button.addEventListener('click', () => setShaderSource(button.dataset.stage));
@@ -72,46 +146,47 @@ function bindShaderTabs() {
 
 function bindMaterialControls(material) {
   const controls = [
-    ['roughness', (value) => { material.roughness = value; }],
-    ['metalness', (value) => { material.metalness = value; }],
-    ['clearcoat', (value) => { material.clearcoat = value; }],
-    ['transmission', (value) => {
-      material.transmission = value;
-      material.opacity = value > 0 ? Math.max(0.28, 1 - value * 0.48) : 1;
-      material.transparent = value > 0;
-    }],
+    'roughness',
+    'metalness',
+    'clearcoat',
+    'transmission',
   ];
 
-  document.querySelector('#base-color')?.addEventListener('input', (event) => {
-    material.color.set(event.target.value);
-    material.needsUpdate = true;
+  const colorInput = document.querySelector('#base-color');
+  if (colorInput) {
+    colorInput.value = materialState.baseColor;
+  }
+
+  colorInput?.addEventListener('input', (event) => {
+    materialState.baseColor = event.target.value;
+    applyMaterialState(material);
+    scheduleShaderRegeneration();
   });
 
-  for (const [id, apply] of controls) {
+  for (const id of controls) {
     const input = document.getElementById(id);
     const output = document.querySelector(`[data-output="${id}"]`);
     if (!input) continue;
 
     const update = () => {
       const value = Number(input.value);
-      apply(value);
+      materialState[id] = value;
+      applyMaterialState(material);
       if (output) output.textContent = value.toFixed(2);
-      material.needsUpdate = true;
+      scheduleShaderRegeneration();
     };
 
+    input.value = String(materialState[id]);
+    if (output) output.textContent = materialState[id].toFixed(2);
     input.addEventListener('input', update);
-    update();
   }
+
+  applyMaterialState(material);
 }
 
 function createPreviewMaterial() {
   const material = new THREE.MeshPhysicalMaterial({
-    color: 0xb7c7d7,
-    roughness: 0.34,
-    metalness: 0,
-    clearcoat: 0.45,
-    clearcoatRoughness: 0.22,
-    transmission: 0,
+    color: materialState.baseColor,
     thickness: 0.16,
     ior: 1.5,
     envMapIntensity: 1.15,
@@ -135,8 +210,9 @@ async function generateWebGpuFlavorShader(mx) {
     throw new Error('MaterialX runtime does not expose WgslShaderGenerator.');
   }
 
+  const materialx = createMaterialXSource();
   const document = mx.createDocument();
-  await mx.readFromXmlString(document, sampleMaterial);
+  await mx.readFromXmlString(document, materialx);
 
   const generator = mx.WgslShaderGenerator.create();
   const context = new mx.GenContext(generator);
@@ -152,26 +228,58 @@ async function generateWebGpuFlavorShader(mx) {
   const shader = generator.generate(element.getNamePath(), element, context);
 
   return {
+    materialx,
     name: element.getNamePath(),
     pixel: shader.getSourceCode('pixel'),
     vertex: shader.getSourceCode('vertex'),
   };
 }
 
-async function initializeMaterialXPanel() {
+async function regenerateShaderSource() {
+  if (!state.mx) return;
+  const requestId = ++state.shaderRequestId;
+  const start = performance.now();
+
   try {
-    setStatus('Loading assets');
-    await loadAssetManifest();
-
-    setStatus('Loading MaterialX');
-    const mx = await loadMaterialX();
-
     setStatus('Generating shader source');
-    state.shaderSources = await generateWebGpuFlavorShader(mx);
+    const shaderSources = await generateWebGpuFlavorShader(state.mx);
+    if (requestId !== state.shaderRequestId) return;
+
+    state.shaderSources = shaderSources;
+    recordDuration('shaderGeneration', start);
     setShaderSource(state.activeStage);
+    setStatus('Ready');
   } catch (error) {
     console.error(error);
     state.shaderSources = {
+      materialx: createMaterialXSource(),
+      pixel: error?.stack || String(error),
+      vertex: error?.stack || String(error),
+    };
+    recordDuration('shaderGeneration', start);
+    setShaderSource(state.activeStage);
+    setStatus('Shader generation failed');
+  }
+}
+
+async function initializeMaterialXPanel() {
+  try {
+    setStatus('Loading assets');
+    const assetStart = performance.now();
+    await loadAssetManifest();
+    recordDuration('assetManifest', assetStart);
+
+    setStatus('Loading MaterialX');
+    const materialXStart = performance.now();
+    const mx = await loadMaterialX();
+    state.mx = mx;
+    recordDuration('materialXLoad', materialXStart);
+
+    await regenerateShaderSource();
+  } catch (error) {
+    console.error(error);
+    state.shaderSources = {
+      materialx: createMaterialXSource(),
       pixel: error?.stack || String(error),
       vertex: error?.stack || String(error),
     };
@@ -180,6 +288,7 @@ async function initializeMaterialXPanel() {
 }
 
 async function createRenderer(canvas) {
+  const start = performance.now();
   const renderer = new THREE.WebGPURenderer({
     antialias: true,
     canvas,
@@ -193,6 +302,7 @@ async function createRenderer(canvas) {
 
   await renderer.init();
   setText('[data-backend]', renderer.backend?.isWebGPUBackend ? 'WebGPU' : 'WebGL2 fallback');
+  recordDuration('rendererInit', start);
 
   return renderer;
 }
@@ -213,6 +323,7 @@ function createScene() {
 }
 
 async function loadEnvironment(scene, renderer) {
+  const start = performance.now();
   try {
     const texture = await new HDRLoader().loadAsync(defaultEnvironment);
     texture.mapping = THREE.EquirectangularReflectionMapping;
@@ -224,6 +335,7 @@ async function loadEnvironment(scene, renderer) {
   } catch (error) {
     console.warn('Could not load WebGPU lab environment.', error);
   }
+  recordDuration('environmentSetup', start);
 }
 
 function fitCameraToObject(camera, controls, object) {
@@ -253,6 +365,7 @@ function createFallbackModel(material) {
 }
 
 async function loadModel(scene, camera, controls, material) {
+  const start = performance.now();
   const geometryUrl = queryParams.get('geom') || defaultGeometry;
 
   try {
@@ -270,6 +383,7 @@ async function loadModel(scene, camera, controls, material) {
     scene.add(model);
     fitCameraToObject(camera, controls, model);
     setText('[data-model]', `${geometryUrl.split('/').pop()} (${meshCount})`);
+    recordDuration('modelLoad', start);
     return;
   } catch (error) {
     console.warn('Could not load WebGPU lab geometry.', error);
@@ -279,6 +393,7 @@ async function loadModel(scene, camera, controls, material) {
   scene.add(model);
   fitCameraToObject(camera, controls, model);
   setText('[data-model]', model.name);
+  recordDuration('modelLoad', start);
 }
 
 function bindResize(renderer, camera) {
@@ -293,14 +408,31 @@ function bindResize(renderer, camera) {
 function createFpsMeter() {
   let frameCount = 0;
   let lastTime = performance.now();
+  let lastFrameTime = 0;
+  const frameTimes = [];
 
   return function updateFps(now) {
+    if (lastFrameTime) {
+      frameTimes.push(now - lastFrameTime);
+      if (frameTimes.length > 180) frameTimes.shift();
+    }
+    lastFrameTime = now;
+
     frameCount++;
     const elapsed = now - lastTime;
     if (elapsed < 500) return;
 
     const fps = Math.round(frameCount * 1000 / elapsed);
     setText('[data-fps]', `${fps} fps`);
+
+    if (frameTimes.length) {
+      const sorted = [...frameTimes].sort((a, b) => a - b);
+      const average = frameTimes.reduce((sum, value) => sum + value, 0) / frameTimes.length;
+      const p95 = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))];
+      setMetric('frameAverage', `${average.toFixed(1)} ms`);
+      setMetric('frameP95', `${p95.toFixed(1)} ms`);
+    }
+
     frameCount = 0;
     lastTime = now;
   };
@@ -325,12 +457,18 @@ async function main() {
 
   bindResize(renderer, camera);
   const updateFps = createFpsMeter();
+  let firstFrameRecorded = false;
   setStatus('Ready');
 
   renderer.setAnimationLoop(() => {
     controls.update();
-    updateFps(performance.now());
     renderer.render(scene, camera);
+    const now = performance.now();
+    if (!firstFrameRecorded) {
+      firstFrameRecorded = true;
+      setMetric('firstFrame', formatDuration(now - appStartTime));
+    }
+    updateFps(now);
   });
 }
 
