@@ -12,6 +12,7 @@ The current app can load MaterialX example materials and geometry from the vendo
 - `scripts/materialx-gen-shader.Makefile` builds the slim Emscripten target without CMake.
 - `scripts/setup-materialx.mjs` clones or updates `vendor/MaterialX` from the pinned source in `materialx-source.json`.
 - `scripts/prepare-static-assets.mjs` copies runtime files and selected MaterialX resources into `dist`.
+- `docs/materialx-rendering-strategy.md` captures the WebGL/WebGPU rendering strategy rationale.
 
 Generated output is intentionally kept out of source control:
 

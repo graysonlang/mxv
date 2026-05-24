@@ -1,0 +1,127 @@
+# MaterialX Rendering Strategy
+
+This note captures the current rationale for integrating MaterialX into a web product-design application, and for treating WebGPU as an experimental renderer path rather than a prerequisite for the first production MaterialX integration.
+
+## Product Goal
+
+The main product goal is to make MaterialX a first-class material language for product design and CMF workflows.
+
+Today, product design iterations can rely heavily on image assets, palettes, and colorways, but those assets do not fully encode material intent. MaterialX gives designers and agents a structured way to describe surface properties such as base color, roughness, metallic response, specular behavior, transmission, textures, and material graph relationships. That material intent can then be previewed in the web app and potentially handed off to downstream tools such as Blender, Maya, USD pipelines, or game asset workflows.
+
+The first-order unlock is MaterialX itself, not WebGPU. A WebGL MaterialX preview can still represent a large and useful slice of practical surface material expression.
+
+## Current Viewer Path
+
+The current viewer is a WebGL-oriented MaterialX preview path:
+
+- MaterialX shader generation uses the ESSL generator.
+- Generated GLSL ES is displayed through Three.js `RawShaderMaterial`.
+- Three.js handles shader compilation, program linkage, attribute binding, uniforms, textures, render state, scene traversal, and draw submission.
+- The app can use this path as a stable preview and fallback for broad browser support.
+
+This path maps cleanly onto Three.js because `RawShaderMaterial` is supported by `WebGLRenderer`.
+
+## WebGPU Motivation
+
+WebGPU remains strategically interesting, especially for high-end desktop users, because it exposes a more modern GPU programming model:
+
+- Render and compute pipelines.
+- Storage buffers and storage textures.
+- More explicit resource management.
+- Lower potential JavaScript overhead for some workloads.
+- Better alignment with modern native GPU APIs such as Metal, Vulkan, and Direct3D 12.
+
+This could help future workflows such as:
+
+- Procedural material baking.
+- Environment map prefiltering.
+- Directional albedo or lookup-table generation.
+- Heavy graph evaluation prepasses.
+- GPU-side preview pipelines for complex generated materials.
+- Potentially richer pro-preview or inspection modes.
+
+These are valuable possibilities, but most of them require renderer architecture work beyond switching shader generators.
+
+## What WebGPU Does Not Automatically Unlock
+
+WebGPU does not automatically make MaterialX more semantically expressive. MaterialX is the material language; WebGPU is a rendering and compute backend.
+
+Specific caveats:
+
+- WebGPU/WGSL exposes vertex, fragment, and compute shader stages. It does not expose traditional geometry or tessellation shader stages.
+- Displacement maps are not automatically solved by WebGPU. Existing vertices can be displaced in a vertex shader, but high-quality displacement still needs dense geometry, subdivision, tessellation-like preprocessing, or compute-generated geometry.
+- MaterialX WGSL output by itself is likely to produce a vertex/fragment rendering path similar in shape to the current ESSL path. Compute-driven optimization would need explicit extra passes.
+- Three.js `WebGPURenderer` does not support custom `ShaderMaterial` or `RawShaderMaterial` paths directly. MaterialX-generated WGSL cannot simply replace GLSL inside the current Three material handoff.
+
+## R3F Implications
+
+The main product application uses React Three Fiber for its primary rendering context. That helps with WebGPU experimentation because R3F supports async renderer creation for Three's `WebGPURenderer`.
+
+However, R3F still sits on top of Three.js. The limitation remains: Three's WebGPU renderer expects WebGPU-compatible Three materials and node/TSL workflows, not arbitrary MaterialX-generated WGSL shader pairs.
+
+This means R3F can make a WebGPU renderer mode easier to mount, isolate, and compare, but it does not remove the need for a dedicated MaterialX WebGPU material/rendering backend if we want to render MaterialX WGSL directly.
+
+## Recommended Product Path
+
+Ship the MaterialX WebGL path first.
+
+This gives designers the core benefit sooner: structured material intent, portable material descriptions, agent-editable material graphs, and downstream export potential. WebGL is also the right fallback path for mobile, older browsers, and contexts where WebGPU is unavailable or unstable.
+
+Keep the implementation backend-aware so that future WebGPU work is not blocked:
+
+- Keep MaterialX document handling separate from renderer-specific material creation.
+- Keep shader target selection explicit, for example `essl` versus `wgsl`.
+- Keep renderer target selection explicit, for example `webgl` versus `webgpu`.
+- Preserve stable material graph inputs and output metadata that can feed multiple preview backends.
+- Instrument compile time, preview latency, frame time, texture count, material graph complexity, and memory pressure.
+
+## Pop-Out Renderer Strategy
+
+If higher fidelity or specialized backend behavior is needed, use a focused pop-out renderer rather than forcing the main R3F product canvas to carry every rendering experiment.
+
+Potential pop-out modes:
+
+- MaterialX WebGL inspector: stable reference preview using the current ESSL path.
+- Calibrated material preview: fixed shaderball, camera, HDRI, tone mapping, and lighting for reproducible thumbnails.
+- WebGPU experimental preview: direct WGSL/WebGPU backend for controlled material experiments.
+- Export validation preview: compare web preview against expected Blender, Maya, or USD handoff behavior.
+- Performance preview: stress-test shader compile time, material graph complexity, texture use, and runtime frame cost.
+
+This lets the main app stay responsive and product-focused while giving advanced workflows a place to become more specialized.
+
+## WebGPU Spike Plan
+
+Before committing to a full WebGPU MaterialX renderer, run a narrow benchmark spike:
+
+1. Generate WGSL from MaterialX and inspect the generated vertex and fragment stages.
+2. Build a tiny direct-WebGPU preview for one mesh, one HDR environment, and a small set of representative MaterialX materials.
+3. Compare against the current WebGL path on representative user machines.
+4. Measure first preview time, shader generation time, shader compile time, steady-state FPS, GPU frame time where available, memory pressure, and interaction latency.
+5. Identify which wins are visible to designers, not just theoretically cleaner from a renderer architecture perspective.
+
+## Decision Gate
+
+Invest in a full WebGPU MaterialX renderer if the spike proves at least one strong product win:
+
+- Noticeably faster material iteration for agent-generated changes.
+- Better interaction performance on complex material graphs.
+- Better support for GPU-side baking or precomputation.
+- A fidelity feature that users can see and that WebGL cannot deliver acceptably.
+- Clear alignment with a premium desktop/pro workflow.
+
+Defer the full WebGPU backend if the outcome is mostly the same image at similar speed with substantially more renderer code.
+
+## Current Recommendation
+
+Use WebGL as the production MaterialX integration path now. Treat WebGPU as a future pro-renderer and benchmarking lane, preferably in a pop-out material lab or inspector first.
+
+This balances product value and engineering cost: MaterialX gets into designers' hands quickly, while WebGPU remains available for targeted fidelity and performance work once there is measured evidence that it pays for its complexity.
+
+## References
+
+- Three.js `RawShaderMaterial` documentation: https://threejs.org/docs/pages/RawShaderMaterial.html
+- Three.js `WebGPURenderer` manual: https://threejs.org/manual/en/webgpurenderer
+- React Three Fiber v9 migration guide, WebGPU renderer setup: https://r3f.docs.pmnd.rs/tutorials/v9-migration-guide
+- MDN WebGPU API overview: https://developer.mozilla.org/en-US/docs/Web/API/WebGPU_API
+- W3C WGSL specification: https://www.w3.org/TR/WGSL/
+- Chrome WebGPU launch note: https://developer.chrome.com/blog/webgpu-release
