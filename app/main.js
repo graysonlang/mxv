@@ -41,6 +41,12 @@ const qualityProfiles = {
     maxPixelRatio: 2,
     antialias: true,
   },
+  adaptive: {
+    label: 'Adaptive: DPR 1 moving, DPR 2 idle',
+    maxPixelRatio: 2,
+    interactiveMaxPixelRatio: 1,
+    antialias: true,
+  },
 };
 
 let renderer;
@@ -55,6 +61,8 @@ let turntableStep = 0;
 let captureRequested = false;
 let materialFilename = queryParams.get('file') || defaultMaterial;
 let qualityMode = getRequestedQualityMode();
+let interactiveQualityRestoreTimer;
+let useInteractivePixelRatio = false;
 let materialXResourcePaths = [];
 
 function getRequestedQualityMode() {
@@ -67,7 +75,14 @@ function getQualityProfile(mode = qualityMode) {
 }
 
 function getRenderPixelRatio(profile = getQualityProfile()) {
-  return Math.min(window.devicePixelRatio || 1, profile.maxPixelRatio);
+  const maxPixelRatio = useInteractivePixelRatio && profile.interactiveMaxPixelRatio
+    ? profile.interactiveMaxPixelRatio
+    : profile.maxPixelRatio;
+  return Math.min(window.devicePixelRatio || 1, maxPixelRatio);
+}
+
+function isAdaptiveQuality(profile = getQualityProfile()) {
+  return profile.interactiveMaxPixelRatio && profile.interactiveMaxPixelRatio < profile.maxPixelRatio;
 }
 
 function prettyName(path) {
@@ -132,6 +147,28 @@ function applyRenderQuality() {
   renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
+function setInteractiveRenderQuality(enabled) {
+  if (!isAdaptiveQuality()) return;
+  if (useInteractivePixelRatio === enabled) return;
+  useInteractivePixelRatio = enabled;
+  applyRenderQuality();
+}
+
+function beginInteractiveRenderQuality() {
+  window.clearTimeout(interactiveQualityRestoreTimer);
+  setInteractiveRenderQuality(true);
+}
+
+function endInteractiveRenderQuality() {
+  window.clearTimeout(interactiveQualityRestoreTimer);
+  interactiveQualityRestoreTimer = window.setTimeout(() => setInteractiveRenderQuality(false), 250);
+}
+
+function resetInteractiveRenderQuality() {
+  window.clearTimeout(interactiveQualityRestoreTimer);
+  useInteractivePixelRatio = false;
+}
+
 function handleQualityChange(event) {
   const nextMode = event.target.value;
   if (nextMode === qualityMode) return;
@@ -146,7 +183,11 @@ function handleQualityChange(event) {
   }
 
   qualityMode = nextMode;
+  resetInteractiveRenderQuality();
   history.replaceState(null, '', nextUrl);
+  if (turntableEnabled) {
+    setInteractiveRenderQuality(true);
+  }
   applyRenderQuality();
   setStatus(`Quality: ${nextProfile.label}`);
 }
@@ -195,6 +236,11 @@ function handleKeyEvents(event) {
     viewer.getScene().toggleBackgroundTexture();
   } else if (event.key === 'p' || event.key === 'P') {
     turntableEnabled = !turntableEnabled;
+    if (turntableEnabled) {
+      beginInteractiveRenderQuality();
+    } else {
+      endInteractiveRenderQuality();
+    }
   } else if ((event.key === 'f' || event.key === 'F') && event.shiftKey) {
     captureRequested = true;
   } else if (event.key === 't' || event.key === 'T') {
@@ -274,6 +320,8 @@ async function initializeViewer() {
   renderer.debug.checkShaderErrors = false;
 
   orbitControls = new OrbitControls(viewer.getScene().getCamera(), renderer.domElement);
+  orbitControls.addEventListener('start', beginInteractiveRenderQuality);
+  orbitControls.addEventListener('end', endInteractiveRenderQuality);
   viewer.getEditor().initialize();
 
   createFPSOverlay();
