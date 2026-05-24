@@ -10,7 +10,7 @@ The current app can load MaterialX example materials and geometry from the vendo
 - `app/smoke.js` is a smaller shader-generation smoke test kept for debugging the MaterialX runtime.
 - `app/materialx-viewer/` contains the adapted MaterialX web viewer code.
 - `scripts/materialx-gen-shader.Makefile` builds the slim Emscripten target without CMake.
-- `scripts/setup-materialx.mjs` clones or updates `vendor/MaterialX`.
+- `scripts/setup-materialx.mjs` clones or updates `vendor/MaterialX` from the pinned source in `materialx-source.json`.
 - `scripts/prepare-static-assets.mjs` copies runtime files and selected MaterialX resources into `dist`.
 
 Generated output is intentionally kept out of source control:
@@ -53,11 +53,11 @@ Fetch or update MaterialX:
 npm run setup:materialx
 ```
 
-By default, setup uses `https://github.com/AcademySoftwareFoundation/MaterialX.git` at `main`. You can override that with environment variables or flags:
+By default, setup uses the known-good MaterialX source pinned in `materialx-source.json`. You can override that with environment variables or flags when testing an upgrade, branch, fork, tag, or commit:
 
 ```sh
-MATERIALX_REF=v1.39.5 npm run setup:materialx
-npm run setup:materialx -- --repo=https://github.com/AcademySoftwareFoundation/MaterialX.git --ref=main
+MATERIALX_REF=main npm run setup:materialx
+npm run setup:materialx -- --repo=https://github.com/AcademySoftwareFoundation/MaterialX.git --ref=v1.39.5
 npm run setup:materialx -- --force
 ```
 
