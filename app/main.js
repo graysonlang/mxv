@@ -311,7 +311,61 @@ function onWindowResize() {
   applyRenderQuality();
 }
 
+function isEditableEventTarget(target) {
+  return target instanceof HTMLElement
+    && (target.isContentEditable || ['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName));
+}
+
+function getBracketHotkey(event) {
+  if (event.key === '[' || (event.code === 'BracketLeft' && !event.shiftKey)) {
+    return { kind: 'material', direction: -1 };
+  }
+  if (event.key === ']' || (event.code === 'BracketRight' && !event.shiftKey)) {
+    return { kind: 'material', direction: 1 };
+  }
+  if (event.key === '{' || (event.code === 'BracketLeft' && event.shiftKey)) {
+    return { kind: 'geometry', direction: -1 };
+  }
+  if (event.key === '}' || (event.code === 'BracketRight' && event.shiftKey)) {
+    return { kind: 'geometry', direction: 1 };
+  }
+  return null;
+}
+
+function stepSelect(selectId, direction) {
+  const select = document.getElementById(selectId);
+  if (!select || select.options.length === 0) return '';
+
+  const currentIndex = Math.max(select.selectedIndex, 0);
+  const nextIndex = (currentIndex + direction + select.options.length) % select.options.length;
+  select.selectedIndex = nextIndex;
+  return select.value;
+}
+
+function cycleMaterial(direction) {
+  const file = stepSelect('materials', direction);
+  if (file) loadSelectedMaterial(file).catch(reportError);
+}
+
+function cycleGeometry(direction) {
+  const file = stepSelect('geometry', direction);
+  if (file) loadSelectedGeometry(file).catch(reportError);
+}
+
 function handleKeyEvents(event) {
+  if (isEditableEventTarget(event.target)) return;
+
+  const bracketHotkey = getBracketHotkey(event);
+  if (bracketHotkey) {
+    event.preventDefault();
+    if (bracketHotkey.kind === 'material') {
+      cycleMaterial(bracketHotkey.direction);
+    } else {
+      cycleGeometry(bracketHotkey.direction);
+    }
+    return;
+  }
+
   if (event.key === 'v' || event.key === 'V') {
     viewer.getScene().toggleBackgroundTexture();
   } else if (event.key === 'p' || event.key === 'P') {
