@@ -997,7 +997,7 @@ export class Material
                 let matTitle = matUI.domElement.getElementsByClassName('title')[0];
                 matTitle.classList.remove('peditor_material_assigned');
                 let img = matTitle.getElementsByTagName('img')[0];
-                img.src = 'public/shader_ball.svg';
+                img.src = 'vendor/MaterialX/javascript/MaterialXView/public/shader_ball.svg';
                 //matTitle.classList.remove('peditor_material_unassigned');
             }
         }
@@ -1020,20 +1020,20 @@ export class Material
             {
                 if (this._soloMaterial == elemPath)
                 {
-                    img.src = 'public/shader_ball.svg';
+                    img.src = 'vendor/MaterialX/javascript/MaterialXView/public/shader_ball.svg';
                     matTitle.classList.remove('peditor_material_assigned');
                     this._soloMaterial = "";
                 }
                 else
                 {
-                    img.src = 'public/shader_ball2.svg';
+                    img.src = 'vendor/MaterialX/javascript/MaterialXView/public/shader_ball2.svg';
                     matTitle.classList.add('peditor_material_assigned');
                     this._soloMaterial = elemPath;
                 }
             }
             else
             {
-                img.src = 'public/shader_ball.svg';
+                img.src = 'vendor/MaterialX/javascript/MaterialXView/public/shader_ball.svg';
                 matTitle.classList.remove('peditor_material_assigned');
             }
         }
@@ -1064,7 +1064,7 @@ export class Material
         // Add a icon to the title to allow for assigning the material to geometry
         // Clicking on the icon will "solo" the material to the geometry.
         // Clicking on the title will open/close the material folder.
-        matTitle.innerHTML = "<img id='" + elemPath + "' src='public/shader_ball.svg' width='16' height='16' style='vertical-align:middle; margin-right: 5px;'>" + elem.getNamePath();
+        matTitle.innerHTML = "<img id='" + elemPath + "' src='vendor/MaterialX/javascript/MaterialXView/public/shader_ball.svg' width='16' height='16' style='vertical-align:middle; margin-right: 5px;'>" + elem.getNamePath();
         let img = matTitle.getElementsByTagName('img')[0];
         if (img)
         {

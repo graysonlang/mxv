@@ -10,7 +10,7 @@ import {
   setLoadingCallback,
   setSceneLoadingCallback,
 } from './materialx-viewer/dropHandling.js';
-import { materialXResourcePaths } from '../src/index.js';
+import { loadAssetManifest } from '../src/index.js';
 
 export function getFilePaths() {
   return { index };
@@ -31,6 +31,7 @@ let turntableEnabled = false;
 let turntableStep = 0;
 let captureRequested = false;
 let materialFilename = new URLSearchParams(document.location.search).get('file') || defaultMaterial;
+let materialXResourcePaths = [];
 
 function prettyName(path) {
   const file = path.split('/').pop() || path;
@@ -170,6 +171,7 @@ async function initializeViewer() {
   const materialsSelect = document.getElementById('materials');
   const geometrySelect = document.getElementById('geometry');
 
+  ({ materialXResourcePaths } = await loadAssetManifest());
   const materialPaths = getMaterialPaths();
   const geometryPaths = getGeometryPaths();
   materialFilename = populateSelect(materialsSelect, materialPaths, materialFilename);

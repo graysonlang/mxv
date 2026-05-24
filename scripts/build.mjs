@@ -1,10 +1,6 @@
-import pluginGlobCopy from '@graysonlang/esp/esbuild-plugin-glob-copy';
 import pluginImp from '@graysonlang/esp/esbuild-plugin-imp';
 import { runBuild } from '@graysonlang/esp/esbuild-runner';
-
-function isLiveReloadBuild() {
-  return process.argv.includes('--serve') || process.argv.includes('--watch');
-}
+import { prepareStaticAssets } from './prepare-static-assets.mjs';
 
 function getOptions(args, verbose, logger) {
   const options = {
@@ -21,18 +17,19 @@ function getOptions(args, verbose, logger) {
     },
     outdir: 'dist',
     plugins: [
-      pluginGlobCopy({ logger }),
       pluginImp({ logger, verbose }),
     ],
     target: ['esnext'],
     ...args,
   };
 
-  if (!isLiveReloadBuild()) {
-    delete options.banner;
-  }
+  // The viewer streams many copied assets. ESP's live-reload EventSource can
+  // reload the page when those asset requests provoke server-side change events,
+  // so keep watch rebuilds but require manual browser refreshes for now.
+  delete options.banner;
 
   return options;
 }
 
+await prepareStaticAssets();
 runBuild(getOptions);

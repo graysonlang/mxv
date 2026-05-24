@@ -1,7 +1,7 @@
 // This import+export makes sure index.html is copied to dist and the import
 // is not stripped out during bundling.
 import index from './smoke.html';
-import { imagePaths, materialXPathPaths } from '../src/index.js';
+import { loadAssetManifest } from '../src/index.js';
 
 export function getFilePaths() {
   return { index };
@@ -63,7 +63,7 @@ async function generateEsslShader(mx) {
   };
 }
 
-function renderShell() {
+function renderShell({ imagePaths = [], materialXPathPaths = [] } = {}) {
   document.body.innerHTML = `
     <main class="workspace">
       <section class="summary">
@@ -114,6 +114,9 @@ window.addEventListener('load', async () => {
   renderShell();
 
   try {
+    const assetManifest = await loadAssetManifest();
+    renderShell(assetManifest);
+
     const mx = await loadMaterialX();
     setText('[data-version]', mx.getVersionString());
     setText('[data-status]', 'Generating ESSL');
