@@ -117,6 +117,7 @@ Supported query params:
 
 - `material=<friendly material name>`
 - `model=<friendly model name>`
+- `environment=<friendly environment name>`
 - `quality=performance|balanced|high|native|adaptive`
 - `antialias=on|off`
 - `aa=on|off`

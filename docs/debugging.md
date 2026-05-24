@@ -76,6 +76,12 @@ Prefiltered environment path:
 http://127.0.0.1:8080/?specular=prefilter&quality=performance&antialias=on
 ```
 
+Alternate environment map:
+
+```text
+http://127.0.0.1:8080/?environment=Table+Mountain+Split&specular=prefilter
+```
+
 Smoke test:
 
 ```text

@@ -1549,9 +1549,6 @@ export class Viewer
         this.document.setDataLibrary(this.stdlib);
 
         this.initializeLighting(renderer, radianceTexture, irradianceTexture, lightRigXml);
-
-        radianceTexture.mapping = THREE.EquirectangularReflectionMapping;
-        this.getScene().setBackgroundTexture(radianceTexture);
     }
 
     //
@@ -1570,8 +1567,17 @@ export class Viewer
         this.lights = findLights(this.document);
         this.lightData = registerLights(mx, this.lights, this.genContext);
 
+        this.setEnvironmentTextures(renderer, radianceTexture, irradianceTexture);
+    }
+
+    setEnvironmentTextures(renderer, radianceTexture, irradianceTexture)
+    {
         this.radianceTexture = prepareEnvTexture(radianceTexture, renderer.capabilities);
         this.irradianceTexture = prepareEnvTexture(irradianceTexture, renderer.capabilities);
+
+        radianceTexture.mapping = THREE.EquirectangularReflectionMapping;
+        this.getScene().setBackgroundTexture(radianceTexture);
+        this.getScene().getScene().background = this.getScene().getBackground();
     }
 
     getEditor()

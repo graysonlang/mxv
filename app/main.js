@@ -19,6 +19,8 @@ export function getFilePaths() {
 const runtimeBaseUrl = new URL('./vendor/materialx-runtime/', import.meta.url);
 const defaultMaterial = 'vendor/MaterialX/resources/Materials/Examples/StandardSurface/standard_surface_default.mtlx';
 const defaultGeometry = 'vendor/MaterialX/resources/Geometry/shaderball.glb';
+const defaultEnvironment = 'vendor/MaterialX/resources/Lights/san_giuseppe_bridge_split.hdr';
+const defaultLightRig = 'vendor/MaterialX/resources/Lights/san_giuseppe_bridge_split.mtlx';
 const navigationDebounceMs = 180;
 const queryParams = new URLSearchParams(document.location.search);
 const qualityProfiles = {
@@ -116,6 +118,7 @@ let turntableStep = 0;
 let captureRequested = false;
 let materialFilename = getRequestedMaterialPath();
 let geometryFilename = getRequestedGeometryPath();
+let environmentFilename = getRequestedEnvironmentPath();
 let qualityMode = getRequestedQualityMode();
 let antialiasMode = getRequestedAntialiasMode();
 let shaderSpecularMode = getRequestedProfileMode('specular', shaderSpecularProfiles, 'fis');
@@ -134,6 +137,10 @@ function getRequestedMaterialPath() {
 
 function getRequestedGeometryPath() {
   return queryParams.get('model') || queryParams.get('geom') || defaultGeometry;
+}
+
+function getRequestedEnvironmentPath() {
+  return queryParams.get('environment') || queryParams.get('env') || defaultEnvironment;
 }
 
 function getRequestedQualityMode() {
@@ -175,7 +182,7 @@ function isAdaptiveQuality(profile = getQualityProfile()) {
 function prettyName(path) {
   const file = path.split('/').pop() || path;
   return file
-    .replace(/\.(mtlx|glb)$/u, '')
+    .replace(/\.(mtlx|glb|hdr)$/u, '')
     .replace(/[_-]+/gu, ' ')
     .replace(/\b\w/gu, char => char.toUpperCase());
 }
@@ -204,6 +211,22 @@ function getGeometryPaths() {
   return materialXResourcePaths
     .filter(path => path.includes('/Geometry/') && path.endsWith('.glb'))
     .sort((a, b) => prettyName(a).localeCompare(prettyName(b)));
+}
+
+function getEnvironmentPaths() {
+  return materialXResourcePaths
+    .filter(path => path.includes('/Lights/') && !path.includes('/Lights/irradiance/') && path.endsWith('.hdr'))
+    .sort((a, b) => prettyName(a).localeCompare(prettyName(b)));
+}
+
+function getEnvironmentAssets(environmentPath) {
+  const irradiancePath = environmentPath.replace('/Lights/', '/Lights/irradiance/');
+  const fallbackIrradiancePath = defaultEnvironment.replace('/Lights/', '/Lights/irradiance/');
+
+  return {
+    radiance: environmentPath,
+    irradiance: materialXResourcePaths.includes(irradiancePath) ? irradiancePath : fallbackIrradiancePath,
+  };
 }
 
 function populateSelect(select, paths, fallback) {
@@ -285,6 +308,10 @@ function getGeometryUrl(file) {
   return getUpdatedUrl({ model: prettyName(file) }, ['geom']);
 }
 
+function getEnvironmentUrl(file) {
+  return getUpdatedUrl({ environment: prettyName(file) }, ['env']);
+}
+
 function getShaderCompilerUrl() {
   return getUpdatedUrl({
     specular: shaderSpecularMode,
@@ -295,7 +322,7 @@ function getShaderCompilerUrl() {
 }
 
 function updateSelectionUrl(updates) {
-  history.replaceState(null, '', getUpdatedUrl(updates, ['file', 'materials', 'geom']));
+  history.replaceState(null, '', getUpdatedUrl(updates, ['file', 'materials', 'geom', 'env']));
 }
 
 function setStatus(message) {
@@ -605,10 +632,33 @@ async function loadSelectedGeometry(file, { updateUrl = true } = {}) {
   setStatus(`Geometry ready: ${prettyName(file)}`);
 }
 
+async function loadSelectedEnvironment(file, { updateUrl = true } = {}) {
+  environmentFilename = file;
+  if (updateUrl) {
+    history.replaceState(null, '', getEnvironmentUrl(file));
+  }
+  setStatus(`Loading environment: ${prettyName(file)}`);
+
+  const hdrLoader = viewer.getHdrLoader();
+  const environmentAssets = getEnvironmentAssets(environmentFilename);
+  const [radianceTexture, irradianceTexture] = await Promise.all([
+    loadWith(hdrLoader, environmentAssets.radiance),
+    loadWith(hdrLoader, environmentAssets.irradiance),
+  ]);
+
+  viewer.setEnvironmentTextures(renderer, radianceTexture, irradianceTexture);
+  viewer.getEditor().initialize();
+  applyShaderCompilerOptions();
+  await viewer.getMaterial().loadMaterials(viewer, materialFilename);
+  viewer.getEditor().updateProperties(0.9);
+  setStatus(`Environment ready: ${prettyName(file)}`);
+}
+
 async function initializeViewer() {
   const canvas = document.getElementById('webglcanvas');
   const materialsSelect = document.getElementById('materials');
   const geometrySelect = document.getElementById('geometry');
+  const environmentSelect = document.getElementById('environment');
   const qualitySelect = document.getElementById('quality');
   const antialiasSelect = document.getElementById('antialias');
   const shaderSpecularSelect = document.getElementById('shader-specular');
@@ -619,11 +669,18 @@ async function initializeViewer() {
   ({ materialXResourcePaths } = await loadAssetManifest());
   const materialPaths = getMaterialPaths();
   const geometryPaths = getGeometryPaths();
+  const environmentPaths = getEnvironmentPaths();
   materialFilename = resolveAssetPath(materialPaths, materialFilename, defaultMaterial);
   geometryFilename = resolveAssetPath(geometryPaths, geometryFilename, defaultGeometry);
+  environmentFilename = resolveAssetPath(environmentPaths, environmentFilename, defaultEnvironment);
   materialFilename = populateSelect(materialsSelect, materialPaths, materialFilename);
   geometryFilename = populateSelect(geometrySelect, geometryPaths, geometryFilename);
-  updateSelectionUrl({ material: prettyName(materialFilename), model: prettyName(geometryFilename) });
+  environmentFilename = populateSelect(environmentSelect, environmentPaths, environmentFilename);
+  updateSelectionUrl({
+    material: prettyName(materialFilename),
+    model: prettyName(geometryFilename),
+    environment: prettyName(environmentFilename),
+  });
   populateQualitySelect(qualitySelect);
   populateAntialiasSelect(antialiasSelect);
   populateProfileSelect(shaderSpecularSelect, shaderSpecularProfiles, shaderSpecularMode);
@@ -656,10 +713,11 @@ async function initializeViewer() {
 
   const hdrLoader = viewer.getHdrLoader();
   const fileLoader = viewer.getFileLoader();
+  const environmentAssets = getEnvironmentAssets(environmentFilename);
   const [radianceTexture, irradianceTexture, lightRigXml, mx] = await Promise.all([
-    loadWith(hdrLoader, 'vendor/MaterialX/resources/Lights/san_giuseppe_bridge_split.hdr'),
-    loadWith(hdrLoader, 'vendor/MaterialX/resources/Lights/irradiance/san_giuseppe_bridge_split.hdr'),
-    loadWith(fileLoader, 'vendor/MaterialX/resources/Lights/san_giuseppe_bridge_split.mtlx'),
+    loadWith(hdrLoader, environmentAssets.radiance),
+    loadWith(hdrLoader, environmentAssets.irradiance),
+    loadWith(fileLoader, defaultLightRig),
     loadMaterialX(),
   ]);
 
@@ -672,6 +730,7 @@ async function initializeViewer() {
 
   materialsSelect.addEventListener('change', event => loadSelectedMaterial(event.target.value).catch(reportError));
   geometrySelect.addEventListener('change', event => loadSelectedGeometry(event.target.value).catch(reportError));
+  environmentSelect.addEventListener('change', event => loadSelectedEnvironment(event.target.value).catch(reportError));
   qualitySelect.addEventListener('change', handleQualityChange);
   antialiasSelect.addEventListener('change', handleAntialiasChange);
   shaderSpecularSelect.addEventListener('change', handleShaderCompilerOptionChange);
