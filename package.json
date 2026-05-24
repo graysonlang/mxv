@@ -1,0 +1,46 @@
+{
+  "name": "@graysonlang/mxv",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MaterialX Viewer Experiment",
+  "keywords": [],
+  "homepage": "https://github.com/graysonlang/mxv#readme",
+  "bugs": {
+    "url": "https://github.com/graysonlang/mxv/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/graysonlang/mxv.git"
+  },
+  "license": "MIT",
+  "author": "Grayson Lang",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "build": "npm run build:wasm && node ./scripts/build.mjs --lint --minify",
+    "serve": "npm run build:wasm && node ./scripts/build.mjs --lint --sourcemap --watch --serve",
+    "serve:https": "ESP_DEV_CERT_NAME=$npm_package_config_esp_dev_cert_name npm run serve -- --host=0.0.0.0 --port=8443",
+    "dev": "npm run serve -- --proxy --launch",
+    "dev:https": "npm run serve:https -- --proxy --launch",
+    "vscode:build": "npm run build -- --vscode",
+    "vscode:debug": "npm run serve -- --vscode",
+    "vscode:debug:https": "npm run serve:https -- --vscode",
+    "cert:dev": "ESP_DEV_CERT_NAME=$npm_package_config_esp_dev_cert_name esp-generate-dev-cert",
+    "lint": "eslint . --ignore-pattern 'dist'",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "setup:materialx": "node ./scripts/setup-materialx.mjs",
+    "build:wasm": "node ./scripts/build-materialx-wasm.mjs",
+    "clean:wasm": "node ./scripts/build-materialx-wasm.mjs --clean-only"
+  },
+  "dependencies": {
+    "@graysonlang/esp": "^1.0.0",
+    "fflate": "^0.8.3",
+    "lil-gui": "^0.19.2",
+    "three": "^0.183.2"
+  },
+  "devDependencies": {
+    "@stylistic/eslint-plugin": "^5.10.0",
+    "esbuild": "^0.28.0",
+    "eslint": "^9.39.4"
+  }
+}
