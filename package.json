@@ -28,6 +28,7 @@
     "cert:dev": "ESP_DEV_CERT_NAME=$npm_package_config_esp_dev_cert_name esp-generate-dev-cert",
     "lint": "eslint .",
     "test": "echo \"Error: no test specified\" && exit 1",
+    "bootstrap": "npm install && npm run setup:materialx",
     "setup:materialx": "node ./scripts/setup-materialx.mjs",
     "build:wasm": "node ./scripts/build-materialx-wasm.mjs",
     "clean:wasm": "node ./scripts/build-materialx-wasm.mjs --clean-only"

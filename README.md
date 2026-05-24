@@ -41,13 +41,20 @@ source /Users/grayson/Depots/github/emscripten-core/emsdk/emsdk_env.sh
 
 ## Setup
 
-Install JavaScript dependencies:
+Bootstrap a fresh checkout:
+
+```sh
+npm run bootstrap
+```
+
+Or install JavaScript dependencies and fetch MaterialX separately:
 
 ```sh
 npm install
+npm run setup:materialx
 ```
 
-Fetch or update MaterialX:
+Refresh MaterialX after setup:
 
 ```sh
 npm run setup:materialx
