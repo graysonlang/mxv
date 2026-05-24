@@ -2,68 +2,104 @@
 
 ## Repository Focus
 
-Work from this repository, not the upstream MaterialX checkout:
+Work in this repository, not the upstream MaterialX checkout.
 
-The upstream MaterialX sources are vendored under `vendor/MaterialX`. Generated Emscripten output should go under `vendor/materialx-runtime`; avoid `vendor/materialx` because macOS case-insensitive filesystems treat it as the same directory as `vendor/MaterialX`.
+The upstream MaterialX sources are vendored under `vendor/MaterialX`. Generated Emscripten output goes under `vendor/materialx-runtime`; avoid `vendor/materialx` because macOS case-insensitive filesystems treat it as the same directory as `vendor/MaterialX`.
 
-## Current Build Shape
+Do not modify `vendor/MaterialX` unless explicitly asked. Use it as reference/source input for the local build and viewer migration.
+
+## Build Shape
 
 - `npm run setup:materialx` prepares `vendor/MaterialX`.
 - `npm run build:wasm` builds `JsMaterialXGenShader.js`, `.wasm`, and `.data` with `em++` through `scripts/materialx-gen-shader.Makefile`.
-- `npm run build` runs the wasm build first, then the existing ESP/esbuild production build.
-- `npm run serve` runs the wasm build first, then starts the ESP/esbuild watch server.
 - `npm run clean:wasm` removes the generated wasm/object build without immediately rebuilding it.
-- `scripts/build.mjs` removes ESP's live-reload banner for non-watch/non-serve builds, so production `dist/main.js` should not request `/esbuild`.
+- `npm run build` runs the wasm build first, then the ESP/esbuild production build.
+- `npm run serve -- --host=127.0.0.1 --port=8080 --vscode` runs the wasm build first, then starts ESP/esbuild watch serving at `http://127.0.0.1:8080`.
+- `scripts/build.mjs` defines `main` and `smoke` entry points and intentionally deletes ESP's live-reload banner. The viewer streams many copied assets, and live reload can otherwise fire repeatedly while images/assets are requested.
 
-## Current Viewer State
-
-- `app/main.js` dynamically imports `vendor/materialx-runtime/JsMaterialXGenShader.js` and uses `locateFile` to resolve the adjacent `.wasm` and `.data` files.
-- The page is currently a shader-generation smoke viewer, not the full MaterialX web viewer.
-- The app loads an inline Standard Surface MaterialX document, imports the standard libraries with `mx.loadStandardLibraries`, finds the renderable element, and generates ESSL with `mx.EsslShaderGenerator`.
-- The UI shows runtime status, MaterialX version, renderable name, runtime file count, image asset count, and generated vertex/pixel shader source in tabs.
-- The known-good renderable in the smoke view is `SR_default`.
-
-The build wrapper finds Emscripten in this order:
+The wasm build wrapper finds Emscripten in this order:
 
 1. `CXX=/path/to/em++`
 2. `EMSDK/upstream/emscripten/em++`
 3. `em++` on `PATH`
 
-Typical setup:
+Typical fresh setup:
 
 ```sh
 source /Users/grayson/Depots/github/emscripten-core/emsdk/emsdk_env.sh
 npm run setup:materialx
 npm run build
-npm run dev
+npm run serve -- --host=127.0.0.1 --port=8080 --vscode
 ```
 
-## Verified So Far
+## Viewer State
 
-- `npm run build` completes successfully.
-- The generated runtime files are copied into `dist/vendor/materialx-runtime/`.
-- Node-side smoke test successfully initialized MaterialX and returned version `1.39.5`.
-- Static Chrome verification rendered status `Ready`, version `1.39.5`, renderable `SR_default`, and generated ESSL vertex source in the page.
-- Static `dist` serving fetched only `main.js`, `JsMaterialXGenShader.js`, `.data`, and `.wasm`; there was no production `/esbuild` request after the banner fix.
-- The ESP dev server responded with `HTTP/1.1 200 OK` at `http://127.0.0.1:8000` when run in the foreground/PTTY.
+- `app/main.js` is the main MaterialX viewer.
+- `app/smoke.js` is kept as a smaller shader-generation smoke/debug entry point.
+- `app/materialx-viewer/viewer.js` is a copied MaterialX web viewer module with local patches for this project.
+- `app/main.js` dynamically imports `vendor/materialx-runtime/JsMaterialXGenShader.js` and uses `locateFile` to resolve the adjacent `.wasm` and `.data` files.
+- The viewer loads example materials, geometry, lights, and textures copied from `vendor/MaterialX/resources`.
+- The default render configuration matches the published ASWF web viewer: `quality=performance` and `antialias=on`.
+- Material and model URL params use friendly names, for example `?material=Standard+Surface+Default&model=Shaderball`.
+- Legacy/full-path aliases are still accepted for compatibility: `file`, `materials`, and `geom`.
 
-Useful smoke test:
+Useful query params:
+
+- `material=<friendly material name>`
+- `model=<friendly model name>`
+- `quality=performance|balanced|high|native|adaptive`
+- `antialias=on|off` or `aa=on|off`
+- `specular=fis|prefilter|none`
+- `albedo=analytic|table|monte-carlo`
+- `interface=complete|reduced`
+- `srgb=on|off`
+
+Keyboard shortcuts:
+
+- `[` and `]` navigate previous/next material.
+- `{` and `}` navigate previous/next model.
+
+Shader compiler/runtime notes:
+
+- Specular `fis` maps to MaterialX filtered importance sampling.
+- Specular `prefilter` maps to MaterialX prefiltered environment lookup and is much faster for large screen coverage.
+- Specular `none` intentionally does not use MaterialX `SPECULAR_ENVIRONMENT_NONE`, because that path removes broader environment lighting and can make the object disappear. The UI maps `none` to the prefiltered shader path and binds a black 1x1 radiance texture at runtime, leaving diffuse irradiance intact.
+
+## Browser Debugging
+
+Start the local server first:
 
 ```sh
-node --input-type=module -e "import createMX from './vendor/materialx-runtime/JsMaterialXGenShader.js'; const base = new URL('./vendor/materialx-runtime/', import.meta.url); const mx = await createMX({ locateFile: f => new URL(f, base).pathname }); console.log(mx.getVersionString());"
+npm run serve -- --host=127.0.0.1 --port=8080 --vscode
+curl -I http://127.0.0.1:8080/
 ```
 
-## Things To Debug Next
+For headless Chrome WebGL screenshots on macOS, plain headless Chrome may fail with `Error creating WebGL context.` Use SwiftShader/ANGLE flags:
 
-- Do a real interactive browser/devtools pass of the generated shader UI, including the vertex/pixel tab behavior and console output.
-- Detached dev-server attempts using `nohup` or zsh disown exited silently in this Codex shell environment. Foreground/PTY serve works. If background serving matters, debug the shell lifecycle around `npm run serve`; this is separate from the MaterialX wasm/runtime path.
-- `vendor/MaterialX` may already exist as a non-git source copy. `scripts/setup-materialx.mjs` accepts this if it has `source/JsMaterialX` and `libraries`; use `npm run setup:materialx -- --force` to replace it with a fresh git clone.
-- Move from the inline smoke material to real viewer workflows: file/library selection, dropped or selected `.mtlx` files, sample material discovery from `vendor/MaterialX/resources`, shader generation controls, generated source display, and renderer integration.
-- Decide which MaterialX resource folders should be copied into `dist` for example materials, textures, lights, and geometry. The current smoke view avoids this by using an inline document.
-- Add a browser automation test once the desired test runner is chosen. The current manual verification used headless Chrome against a static Python server over `dist`.
-- The Makefile source list is intentionally slim for `JsMaterialXGenShader`. If future MaterialX versions add new required binding/source files, update `scripts/materialx-gen-shader.Makefile` and rerun `npm run clean:wasm && npm run build:wasm`.
-- Keep generated folders ignored: `vendor/MaterialX`, `vendor/.build`, `vendor/.cache`, `vendor/materialx-runtime`, and `dist`.
+```sh
+'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' \
+  --headless=new \
+  --enable-webgl \
+  --enable-webgl2 \
+  --ignore-gpu-blocklist \
+  --enable-unsafe-swiftshader \
+  --use-angle=swiftshader \
+  --disable-background-networking \
+  --disable-component-update \
+  --disable-sync \
+  --disable-default-apps \
+  --no-first-run \
+  --user-data-dir=/private/tmp/mxv-chrome-profile-webgl \
+  --window-size=1280,720 \
+  --virtual-time-budget=15000 \
+  --screenshot=/private/tmp/mxv-webgl-check.png \
+  'http://127.0.0.1:8080/?specular=none&quality=performance&antialias=on'
+```
 
-## Notes For Future Agents
+The useful signal is the screenshot itself, not Chrome's stderr. Chrome may print updater, GPU stall, or allocator warnings during a successful capture. If a headless Chrome process remains attached after writing the screenshot, stop that process before continuing.
 
-Prefer small, repo-local changes in `mxv`. Do not modify the downloaded `vendor/MaterialX` checkout for this migration unless explicitly asked. If CMake details are needed, use the vendored MaterialX source as reference only; this project is intentionally using a plain Emscripten Makefile and ESP/esbuild for the web app.
+## Maintenance Notes
+
+- Keep generated/vendor folders ignored by tooling: `vendor/MaterialX`, `vendor/.build`, `vendor/.cache`, `vendor/materialx-runtime`, and `dist`.
+- The Makefile source list is intentionally slim for `JsMaterialXGenShader`. If future MaterialX versions add required binding/source files, update `scripts/materialx-gen-shader.Makefile` and rerun `npm run clean:wasm && npm run build:wasm`.
+- `scripts/setup-materialx.mjs` accepts an existing non-git `vendor/MaterialX` source copy if it has `source/JsMaterialX` and `libraries`; use `npm run setup:materialx -- --force` to replace it with a fresh clone.
