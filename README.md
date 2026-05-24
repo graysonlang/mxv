@@ -8,6 +8,7 @@ The current app can load MaterialX example materials and geometry from the vendo
 
 - `app/main.js` is the main model/material viewer.
 - `app/smoke.js` is a smaller shader-generation smoke test kept for debugging the MaterialX runtime.
+- `app/webgpu.js` is an experimental WebGPU material lab entry point.
 - `app/materialx-viewer/` contains the adapted MaterialX web viewer code.
 - `scripts/materialx-gen-shader.Makefile` builds the slim Emscripten target without CMake.
 - `scripts/setup-materialx.mjs` clones or updates `vendor/MaterialX` from the pinned source in `materialx-source.json`.

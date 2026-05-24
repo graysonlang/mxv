@@ -28,6 +28,12 @@ The smaller shader-generation smoke test is served at:
 http://127.0.0.1:8080/smoke.html
 ```
 
+The experimental WebGPU material lab is served at:
+
+```text
+http://127.0.0.1:8080/webgpu.html
+```
+
 ## Headless Chrome WebGL Screenshots
 
 Plain headless Chrome on macOS may fail with `Error creating WebGL context.` Use SwiftShader/ANGLE flags when capturing viewer screenshots:
@@ -86,4 +92,16 @@ Smoke test:
 
 ```text
 http://127.0.0.1:8080/smoke.html
+```
+
+WebGPU material lab:
+
+```text
+http://127.0.0.1:8080/webgpu.html
+```
+
+WebGPU material lab with Three's WebGL2 fallback backend forced:
+
+```text
+http://127.0.0.1:8080/webgpu.html?renderer=webgl
 ```

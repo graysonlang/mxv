@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>mxv WebGPU</title>
+  <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgo=" />
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      background: #101312;
+      color: #efede7;
+      margin: 0;
+      overflow: hidden;
+    }
+
+    #container {
+      min-height: 100vh;
+      position: relative;
+    }
+
+    #webgpu-canvas {
+      display: block;
+      height: 100vh;
+      outline: none;
+      width: 100vw;
+    }
+
+    .control-panel,
+    .shader-panel,
+    .bottom-hud {
+      position: fixed;
+      z-index: 5;
+    }
+
+    .control-panel,
+    .shader-panel {
+      background: rgba(13, 17, 16, 0.78);
+      border: 1px solid rgba(194, 211, 203, 0.18);
+      box-sizing: border-box;
+      backdrop-filter: blur(12px);
+    }
+
+    .control-panel {
+      display: grid;
+      gap: 9px;
+      left: 12px;
+      max-width: min(360px, calc(100vw - 24px));
+      padding: 10px;
+      top: 12px;
+      width: 320px;
+    }
+
+    .control-row {
+      align-items: center;
+      display: grid;
+      gap: 9px;
+      grid-template-columns: 94px minmax(0, 1fr) 46px;
+      min-height: 30px;
+    }
+
+    .control-row.color-row {
+      grid-template-columns: 94px minmax(0, 1fr);
+    }
+
+    label,
+    .status-label,
+    .panel-label {
+      color: #a8b5ae;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+
+    input[type="range"] {
+      accent-color: #79d0d0;
+      min-width: 0;
+      width: 100%;
+    }
+
+    input[type="color"] {
+      appearance: none;
+      background: #111715;
+      border: 1px solid #43504b;
+      border-radius: 6px;
+      height: 30px;
+      padding: 0;
+      width: 100%;
+    }
+
+    output,
+    .status-value {
+      color: #f0eee7;
+      font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      min-width: 0;
+      overflow: hidden;
+      overflow-wrap: anywhere;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .shader-panel {
+      bottom: 12px;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      max-height: min(50vh, 460px);
+      max-width: min(620px, calc(100vw - 24px));
+      right: 12px;
+      top: 12px;
+      width: min(38vw, 620px);
+    }
+
+    .shader-toolbar {
+      align-items: center;
+      border-bottom: 1px solid rgba(194, 211, 203, 0.14);
+      display: flex;
+      gap: 8px;
+      min-height: 42px;
+      padding: 6px 8px;
+    }
+
+    .panel-label {
+      margin-right: auto;
+    }
+
+    .tab {
+      appearance: none;
+      background: #111715;
+      border: 1px solid #43504b;
+      border-radius: 6px;
+      color: #e5e0d5;
+      cursor: pointer;
+      font: 700 12px/1 ui-sans-serif, system-ui, sans-serif;
+      min-height: 30px;
+      min-width: 76px;
+      padding: 0 10px;
+    }
+
+    .tab.is-active {
+      background: #79d0d0;
+      border-color: #79d0d0;
+      color: #071716;
+    }
+
+    pre {
+      background: rgba(8, 11, 10, 0.88);
+      color: #d9d3c7;
+      font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      margin: 0;
+      overflow: auto;
+      padding: 12px;
+      white-space: pre;
+    }
+
+    .bottom-hud {
+      align-items: flex-end;
+      bottom: 12px;
+      display: flex;
+      gap: 8px;
+      left: 12px;
+      max-width: calc(100vw - 24px);
+      pointer-events: none;
+      z-index: 6;
+    }
+
+    .status,
+    .fps-overlay {
+      background: rgba(13, 17, 16, 0.72);
+      border: 1px solid rgba(194, 211, 203, 0.16);
+      box-sizing: border-box;
+      min-height: 28px;
+      padding: 6px 9px;
+    }
+
+    .status {
+      align-items: center;
+      display: flex;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .fps-overlay {
+      color: #f0eee7;
+      flex: 0 0 auto;
+      font: 12px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    @media (max-width: 900px) {
+      .shader-panel {
+        bottom: 12px;
+        left: 12px;
+        max-height: 38vh;
+        top: auto;
+        width: auto;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .control-panel {
+        right: 12px;
+        width: auto;
+      }
+
+      .control-row {
+        grid-template-columns: 1fr;
+      }
+
+      .bottom-hud {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .status-value {
+        white-space: normal;
+      }
+    }
+  </style>
+  <script src="./webgpu.js" type="module"></script>
+</head>
+<body>
+  <div id="container">
+    <div class="control-panel">
+      <div class="control-row color-row">
+        <label for="base-color">Base Color</label>
+        <input id="base-color" type="color" value="#b7c7d7">
+      </div>
+      <div class="control-row">
+        <label for="roughness">Roughness</label>
+        <input id="roughness" type="range" min="0" max="1" step="0.01" value="0.34">
+        <output for="roughness" data-output="roughness">0.34</output>
+      </div>
+      <div class="control-row">
+        <label for="metalness">Metalness</label>
+        <input id="metalness" type="range" min="0" max="1" step="0.01" value="0">
+        <output for="metalness" data-output="metalness">0.00</output>
+      </div>
+      <div class="control-row">
+        <label for="clearcoat">Clearcoat</label>
+        <input id="clearcoat" type="range" min="0" max="1" step="0.01" value="0.45">
+        <output for="clearcoat" data-output="clearcoat">0.45</output>
+      </div>
+      <div class="control-row">
+        <label for="transmission">Transmission</label>
+        <input id="transmission" type="range" min="0" max="1" step="0.01" value="0">
+        <output for="transmission" data-output="transmission">0.00</output>
+      </div>
+    </div>
+    <aside class="shader-panel">
+      <div class="shader-toolbar" role="tablist" aria-label="MaterialX shader stage">
+        <span class="panel-label">MaterialX Shadergen</span>
+        <button type="button" class="tab is-active" data-stage="vertex" role="tab" aria-selected="true">Vertex</button>
+        <button type="button" class="tab" data-stage="pixel" role="tab" aria-selected="false">Pixel</button>
+      </div>
+      <pre data-source>Loading MaterialX runtime...</pre>
+    </aside>
+    <div class="bottom-hud">
+      <div class="status">
+        <span class="status-label">Status</span>
+        <span class="status-value" data-status>Starting WebGPU lab</span>
+      </div>
+      <div class="status">
+        <span class="status-label">Backend</span>
+        <span class="status-value" data-backend>-</span>
+      </div>
+      <div class="status">
+        <span class="status-label">Model</span>
+        <span class="status-value" data-model>-</span>
+      </div>
+      <div class="fps-overlay" data-fps>-- fps</div>
+    </div>
+    <canvas id="webgpu-canvas" tabindex="1"></canvas>
+  </div>
+</body>
+</html>

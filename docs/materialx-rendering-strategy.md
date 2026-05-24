@@ -83,7 +83,7 @@ Potential pop-out modes:
 
 - MaterialX WebGL inspector: stable reference preview using the current ESSL path.
 - Calibrated material preview: fixed shaderball, camera, HDRI, tone mapping, and lighting for reproducible thumbnails.
-- WebGPU experimental preview: direct WGSL/WebGPU backend for controlled material experiments.
+- WebGPU experimental preview: Three.js WebGPU display path with MaterialX WebGPU-flavored shader generation surfaced for controlled material experiments.
 - Export validation preview: compare web preview against expected Blender, Maya, or USD handoff behavior.
 - Performance preview: stress-test shader compile time, material graph complexity, texture use, and runtime frame cost.
 
