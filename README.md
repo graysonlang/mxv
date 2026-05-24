@@ -151,32 +151,4 @@ Specular modes:
 
 ## Useful Debugging
 
-Check that the dev server is up:
-
-```sh
-curl -I http://127.0.0.1:8080/
-```
-
-Capture a headless WebGL screenshot with Chrome on macOS:
-
-```sh
-'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' \
-  --headless=new \
-  --enable-webgl \
-  --enable-webgl2 \
-  --ignore-gpu-blocklist \
-  --enable-unsafe-swiftshader \
-  --use-angle=swiftshader \
-  --disable-background-networking \
-  --disable-component-update \
-  --disable-sync \
-  --disable-default-apps \
-  --no-first-run \
-  --user-data-dir=/private/tmp/mxv-chrome-profile-webgl \
-  --window-size=1280,720 \
-  --virtual-time-budget=15000 \
-  --screenshot=/private/tmp/mxv-webgl-check.png \
-  'http://127.0.0.1:8080/?specular=none&quality=performance&antialias=on'
-```
-
-Plain headless Chrome may fail with `Error creating WebGL context.` The SwiftShader/ANGLE flags above allow Chrome to create a WebGL context in headless mode.
+See [docs/debugging.md](docs/debugging.md) for dev-server checks and the headless Chrome WebGL screenshot recipe.

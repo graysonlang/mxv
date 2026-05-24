@@ -26,33 +26,4 @@ Generated Emscripten output goes under `vendor/materialx-runtime`; avoid `vendor
 
 ## Browser Debugging
 
-Start the local server first:
-
-```sh
-npm run serve -- --host=127.0.0.1 --port=8080 --vscode
-curl -I http://127.0.0.1:8080/
-```
-
-For headless Chrome WebGL screenshots on macOS, plain headless Chrome may fail with `Error creating WebGL context.` Use SwiftShader/ANGLE flags:
-
-```sh
-'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' \
-  --headless=new \
-  --enable-webgl \
-  --enable-webgl2 \
-  --ignore-gpu-blocklist \
-  --enable-unsafe-swiftshader \
-  --use-angle=swiftshader \
-  --disable-background-networking \
-  --disable-component-update \
-  --disable-sync \
-  --disable-default-apps \
-  --no-first-run \
-  --user-data-dir=/private/tmp/mxv-chrome-profile-webgl \
-  --window-size=1280,720 \
-  --virtual-time-budget=15000 \
-  --screenshot=/private/tmp/mxv-webgl-check.png \
-  'http://127.0.0.1:8080/?specular=none&quality=performance&antialias=on'
-```
-
-The useful signal is the screenshot itself, not Chrome's stderr. Chrome may print updater, GPU stall, or allocator warnings during a successful capture. If a headless Chrome process remains attached after writing the screenshot, stop that process before continuing.
+Use `docs/debugging.md` for browser checks. In particular, plain headless Chrome may fail to create WebGL contexts on macOS; the dedicated doc has the SwiftShader/ANGLE command that worked for this repo.
