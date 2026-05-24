@@ -64,16 +64,25 @@ let frameCount = 0;
 let turntableEnabled = false;
 let turntableStep = 0;
 let captureRequested = false;
-let materialFilename = queryParams.get('file') || defaultMaterial;
+let materialFilename = getRequestedMaterialPath();
+let geometryFilename = getRequestedGeometryPath();
 let qualityMode = getRequestedQualityMode();
 let antialiasMode = getRequestedAntialiasMode();
 let interactiveQualityRestoreTimer;
 let useInteractivePixelRatio = false;
 let materialXResourcePaths = [];
 
+function getRequestedMaterialPath() {
+  return queryParams.get('material') || queryParams.get('materials') || queryParams.get('file') || defaultMaterial;
+}
+
+function getRequestedGeometryPath() {
+  return queryParams.get('model') || queryParams.get('geom') || defaultGeometry;
+}
+
 function getRequestedQualityMode() {
-  const requested = queryParams.get('quality') || 'native';
-  return Object.hasOwn(qualityProfiles, requested) ? requested : 'native';
+  const requested = queryParams.get('quality') || 'performance';
+  return Object.hasOwn(qualityProfiles, requested) ? requested : 'performance';
 }
 
 function getRequestedAntialiasMode() {
@@ -108,6 +117,20 @@ function prettyName(path) {
     .replace(/\.(mtlx|glb)$/u, '')
     .replace(/[_-]+/gu, ' ')
     .replace(/\b\w/gu, char => char.toUpperCase());
+}
+
+function assetNameKey(path) {
+  return prettyName(String(path || '').trim()).toLocaleLowerCase();
+}
+
+function resolveAssetPath(paths, requested, fallback) {
+  if (paths.includes(requested)) return requested;
+
+  const requestedKey = assetNameKey(requested);
+  const matchedPath = paths.find(path => assetNameKey(path) === requestedKey);
+  if (matchedPath) return matchedPath;
+
+  return paths.includes(fallback) ? fallback : paths[0] || '';
 }
 
 function getMaterialPaths() {
@@ -159,12 +182,18 @@ function populateAntialiasSelect(select) {
   select.value = antialiasMode;
 }
 
-function getUpdatedUrl(updates) {
+function getUpdatedUrl(updates, removeKeys = []) {
   const params = new URLSearchParams(document.location.search);
+  for (const key of removeKeys) {
+    params.delete(key);
+  }
+
   for (const [key, value] of Object.entries(updates)) {
     params.set(key, value);
   }
-  return `${document.location.pathname}?${params.toString()}${document.location.hash}`;
+
+  const search = params.toString();
+  return `${document.location.pathname}${search ? `?${search}` : ''}${document.location.hash}`;
 }
 
 function getQualityUrl(mode) {
@@ -172,10 +201,19 @@ function getQualityUrl(mode) {
 }
 
 function getAntialiasUrl(mode) {
-  const params = new URLSearchParams(document.location.search);
-  params.delete('aa');
-  params.set('antialias', mode);
-  return `${document.location.pathname}?${params.toString()}${document.location.hash}`;
+  return getUpdatedUrl({ antialias: mode }, ['aa']);
+}
+
+function getMaterialUrl(file) {
+  return getUpdatedUrl({ material: prettyName(file) }, ['file', 'materials']);
+}
+
+function getGeometryUrl(file) {
+  return getUpdatedUrl({ model: prettyName(file) }, ['geom']);
+}
+
+function updateSelectionUrl(updates) {
+  history.replaceState(null, '', getUpdatedUrl(updates, ['file', 'materials', 'geom']));
 }
 
 function setStatus(message) {
@@ -318,8 +356,11 @@ function animate() {
   }
 }
 
-async function loadSelectedMaterial(file) {
+async function loadSelectedMaterial(file, { updateUrl = true } = {}) {
   materialFilename = file;
+  if (updateUrl) {
+    history.replaceState(null, '', getMaterialUrl(file));
+  }
   setStatus(`Loading material: ${prettyName(file)}`);
   viewer.getEditor().initialize();
   await viewer.getMaterial().loadMaterials(viewer, materialFilename);
@@ -327,7 +368,11 @@ async function loadSelectedMaterial(file) {
   setStatus(`Material ready: ${prettyName(file)}`);
 }
 
-async function loadSelectedGeometry(file) {
+async function loadSelectedGeometry(file, { updateUrl = true } = {}) {
+  geometryFilename = file;
+  if (updateUrl) {
+    history.replaceState(null, '', getGeometryUrl(file));
+  }
   setStatus(`Loading geometry: ${prettyName(file)}`);
   viewer.getScene().setGeometryURL(file);
   await viewer.getScene().loadGeometry(viewer, orbitControls);
@@ -344,8 +389,11 @@ async function initializeViewer() {
   ({ materialXResourcePaths } = await loadAssetManifest());
   const materialPaths = getMaterialPaths();
   const geometryPaths = getGeometryPaths();
+  materialFilename = resolveAssetPath(materialPaths, materialFilename, defaultMaterial);
+  geometryFilename = resolveAssetPath(geometryPaths, geometryFilename, defaultGeometry);
   materialFilename = populateSelect(materialsSelect, materialPaths, materialFilename);
-  const geometryFilename = populateSelect(geometrySelect, geometryPaths, defaultGeometry);
+  geometryFilename = populateSelect(geometrySelect, geometryPaths, geometryFilename);
+  updateSelectionUrl({ material: prettyName(materialFilename), model: prettyName(geometryFilename) });
   populateQualitySelect(qualitySelect);
   populateAntialiasSelect(antialiasSelect);
 
@@ -399,12 +447,12 @@ async function initializeViewer() {
 
   setLoadingCallback((file) => {
     const droppedMaterial = file.fullPath || file.name;
-    loadSelectedMaterial(droppedMaterial).catch(reportError);
+    loadSelectedMaterial(droppedMaterial, { updateUrl: false }).catch(reportError);
   });
 
   setSceneLoadingCallback((file) => {
     const droppedGeometry = file.fullPath || file.name;
-    loadSelectedGeometry(droppedGeometry).catch(reportError);
+    loadSelectedGeometry(droppedGeometry, { updateUrl: false }).catch(reportError);
   });
 
   THREE.Cache.enabled = true;
