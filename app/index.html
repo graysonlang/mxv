@@ -40,8 +40,7 @@
       z-index: 5;
     }
 
-    .select-row,
-    .status {
+    .select-row {
       align-items: center;
       background: rgba(13, 17, 16, 0.78);
       border: 1px solid rgba(183, 205, 193, 0.18);
@@ -51,6 +50,30 @@
       grid-template-columns: 76px minmax(0, 1fr);
       min-height: 34px;
       padding: 6px 8px;
+    }
+
+    .bottom-hud {
+      align-items: flex-end;
+      bottom: 12px;
+      display: flex;
+      gap: 8px;
+      left: 12px;
+      max-width: calc(100vw - 24px);
+      pointer-events: none;
+      position: fixed;
+      z-index: 6;
+    }
+
+    .status {
+      align-items: center;
+      background: rgba(13, 17, 16, 0.72);
+      border: 1px solid rgba(183, 205, 193, 0.16);
+      box-sizing: border-box;
+      display: flex;
+      gap: 10px;
+      min-height: 28px;
+      min-width: 0;
+      padding: 6px 9px;
     }
 
     label,
@@ -82,20 +105,21 @@
 
     .status-value {
       font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      min-width: 0;
+      overflow: hidden;
       overflow-wrap: anywhere;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .fps-overlay {
       background: rgba(13, 17, 16, 0.72);
       border: 1px solid rgba(183, 205, 193, 0.16);
-      bottom: 12px;
       color: #f0eee7;
+      flex: 0 0 auto;
       font: 12px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      left: 12px;
+      min-height: 28px;
       padding: 6px 9px;
-      pointer-events: none;
-      position: fixed;
-      z-index: 6;
     }
 
     .lil-gui {
@@ -123,9 +147,17 @@
         right: 12px;
       }
 
-      .select-row,
-      .status {
+      .select-row {
         grid-template-columns: 1fr;
+      }
+
+      .bottom-hud {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .status-value {
+        white-space: normal;
       }
     }
   </style>
@@ -166,6 +198,8 @@
         <label for="shader-srgb">sRGB</label>
         <select id="shader-srgb" name="shader-srgb"></select>
       </div>
+    </div>
+    <div class="bottom-hud">
       <div class="status">
         <span class="status-label">Status</span>
         <span class="status-value" data-status>Loading viewer</span>

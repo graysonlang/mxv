@@ -436,7 +436,12 @@ function createFPSOverlay() {
   fpsOverlay = document.createElement('div');
   fpsOverlay.className = 'fps-overlay';
   fpsOverlay.textContent = 'FPS: 0';
-  document.body.append(fpsOverlay);
+  const bottomHud = document.querySelector('.bottom-hud');
+  if (bottomHud) {
+    bottomHud.prepend(fpsOverlay);
+  } else {
+    document.body.append(fpsOverlay);
+  }
 }
 
 function setFPSOverlayVisible(visible) {

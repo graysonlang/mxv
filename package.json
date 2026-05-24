@@ -32,6 +32,9 @@
     "build:wasm": "node ./scripts/build-materialx-wasm.mjs",
     "clean:wasm": "node ./scripts/build-materialx-wasm.mjs --clean-only"
   },
+  "config": {
+    "esp_dev_cert_name": "graysonlang-mxv-dev"
+  },
   "dependencies": {
     "@graysonlang/esp": "^1.0.0",
     "fflate": "^0.8.3",
