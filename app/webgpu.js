@@ -18,16 +18,70 @@ const queryParams = new URLSearchParams(document.location.search);
 const forceWebGL = queryParams.get('renderer') === 'webgl' || queryParams.get('forceWebGL') === '1';
 const appStartTime = performance.now();
 
-const materialState = {
-  baseColor: '#b7c7d7',
-  clearcoat: 0.45,
-  metalness: 0,
-  roughness: 0.34,
-  transmission: 0,
+const materialPresets = {
+  coatedPlastic: {
+    label: 'Coated Plastic',
+    values: {
+      baseColor: '#b7c7d7',
+      clearcoat: 0.45,
+      metalness: 0,
+      roughness: 0.34,
+      transmission: 0,
+    },
+  },
+  brushedAluminum: {
+    label: 'Brushed Aluminum',
+    values: {
+      baseColor: '#c6c2b8',
+      clearcoat: 0.08,
+      metalness: 1,
+      roughness: 0.24,
+      transmission: 0,
+    },
+  },
+  glazedCeramic: {
+    label: 'Glazed Ceramic',
+    values: {
+      baseColor: '#f0e7d4',
+      clearcoat: 0.82,
+      metalness: 0,
+      roughness: 0.16,
+      transmission: 0,
+    },
+  },
+  softRubber: {
+    label: 'Soft Rubber',
+    values: {
+      baseColor: '#202528',
+      clearcoat: 0.02,
+      metalness: 0,
+      roughness: 0.82,
+      transmission: 0,
+    },
+  },
+  smokedGlass: {
+    label: 'Smoked Glass',
+    values: {
+      baseColor: '#7c98a3',
+      clearcoat: 0.7,
+      metalness: 0,
+      roughness: 0.04,
+      transmission: 0.72,
+    },
+  },
 };
+const defaultMaterialPreset = 'coatedPlastic';
+const materialState = { ...materialPresets[defaultMaterialPreset].values };
+const materialControlIds = [
+  'roughness',
+  'metalness',
+  'clearcoat',
+  'transmission',
+];
 
 const state = {
   activeStage: 'vertex',
+  activePreset: defaultMaterialPreset,
   mx: null,
   shaderGenerationTimer: null,
   shaderRequestId: 0,
@@ -85,6 +139,18 @@ function hexToRgbFloats(hex) {
   ];
 }
 
+function getMaterialPresetName() {
+  return state.activePreset === 'custom' ? 'custom' : state.activePreset;
+}
+
+function getMaterialPresetLabel() {
+  return state.activePreset === 'custom' ? 'Custom' : materialPresets[state.activePreset]?.label || 'Custom';
+}
+
+function getMaterialNodeSuffix() {
+  return getMaterialPresetName().replace(/[^A-Za-z0-9_]/g, '_');
+}
+
 function createMaterialXSource() {
   const [r, g, b] = hexToRgbFloats(materialState.baseColor).map(formatMaterialFloat);
   const roughness = formatMaterialFloat(materialState.roughness);
@@ -92,10 +158,12 @@ function createMaterialXSource() {
   const clearcoat = formatMaterialFloat(materialState.clearcoat);
   const transmission = formatMaterialFloat(materialState.transmission);
   const coatRoughness = formatMaterialFloat(Math.max(0.04, materialState.roughness * 0.65));
+  const nodeSuffix = getMaterialNodeSuffix();
 
   return `<?xml version="1.0"?>
 <materialx version="1.39" colorspace="lin_rec709">
-  <standard_surface name="SR_webgpu_lab" type="surfaceshader">
+  <!-- Preset: ${getMaterialPresetLabel()} -->
+  <standard_surface name="SR_${nodeSuffix}" type="surfaceshader">
     <input name="base" type="float" value="1.0" />
     <input name="base_color" type="color3" value="${r}, ${g}, ${b}" />
     <input name="diffuse_roughness" type="float" value="${roughness}" />
@@ -112,8 +180,8 @@ function createMaterialXSource() {
     <input name="emission" type="float" value="0" />
     <input name="opacity" type="color3" value="1, 1, 1" />
   </standard_surface>
-  <surfacematerial name="WebGPULabMaterial" type="material">
-    <input name="surfaceshader" type="surfaceshader" nodename="SR_webgpu_lab" />
+  <surfacematerial name="MAT_${nodeSuffix}" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="SR_${nodeSuffix}" />
   </surfacematerial>
 </materialx>`;
 }
@@ -130,6 +198,38 @@ function applyMaterialState(material) {
   material.needsUpdate = true;
 }
 
+function syncMaterialControls() {
+  const presetSelect = document.getElementById('material-preset');
+  if (presetSelect) presetSelect.value = state.activePreset;
+
+  const colorInput = document.querySelector('#base-color');
+  if (colorInput) colorInput.value = materialState.baseColor;
+
+  for (const id of materialControlIds) {
+    const input = document.getElementById(id);
+    const output = document.querySelector(`[data-output="${id}"]`);
+    if (input) input.value = String(materialState[id]);
+    if (output) output.textContent = materialState[id].toFixed(2);
+  }
+}
+
+function markCustomPreset() {
+  state.activePreset = 'custom';
+  const presetSelect = document.getElementById('material-preset');
+  if (presetSelect) presetSelect.value = state.activePreset;
+}
+
+function applyPreset(presetId, material) {
+  const preset = materialPresets[presetId];
+  if (!preset) return;
+
+  state.activePreset = presetId;
+  Object.assign(materialState, preset.values);
+  syncMaterialControls();
+  applyMaterialState(material);
+  scheduleShaderRegeneration();
+}
+
 function scheduleShaderRegeneration() {
   if (!state.mx) return;
   clearTimeout(state.shaderGenerationTimer);
@@ -144,43 +244,56 @@ function bindShaderTabs() {
   });
 }
 
-function bindMaterialControls(material) {
-  const controls = [
-    'roughness',
-    'metalness',
-    'clearcoat',
-    'transmission',
-  ];
+function bindMaterialPresetSelect(material) {
+  const presetSelect = document.getElementById('material-preset');
+  if (!presetSelect) return;
 
+  const presetOptions = Object.entries(materialPresets)
+    .map(([id, preset]) => `<option value="${id}">${preset.label}</option>`)
+    .join('');
+  presetSelect.innerHTML = `${presetOptions}<option value="custom">Custom</option>`;
+  presetSelect.value = state.activePreset;
+
+  presetSelect.addEventListener('change', () => {
+    if (presetSelect.value === 'custom') {
+      state.activePreset = 'custom';
+      scheduleShaderRegeneration();
+      return;
+    }
+
+    applyPreset(presetSelect.value, material);
+  });
+}
+
+function bindMaterialControls(material) {
+  bindMaterialPresetSelect(material);
   const colorInput = document.querySelector('#base-color');
-  if (colorInput) {
-    colorInput.value = materialState.baseColor;
-  }
 
   colorInput?.addEventListener('input', (event) => {
+    markCustomPreset();
     materialState.baseColor = event.target.value;
     applyMaterialState(material);
     scheduleShaderRegeneration();
   });
 
-  for (const id of controls) {
+  for (const id of materialControlIds) {
     const input = document.getElementById(id);
-    const output = document.querySelector(`[data-output="${id}"]`);
     if (!input) continue;
 
     const update = () => {
+      markCustomPreset();
       const value = Number(input.value);
       materialState[id] = value;
       applyMaterialState(material);
+      const output = document.querySelector(`[data-output="${id}"]`);
       if (output) output.textContent = value.toFixed(2);
       scheduleShaderRegeneration();
     };
 
-    input.value = String(materialState[id]);
-    if (output) output.textContent = materialState[id].toFixed(2);
     input.addEventListener('input', update);
   }
 
+  syncMaterialControls();
   applyMaterialState(material);
 }
 

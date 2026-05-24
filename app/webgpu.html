@@ -67,6 +67,10 @@
       grid-template-columns: 94px minmax(0, 1fr);
     }
 
+    .control-row.preset-row {
+      grid-template-columns: 94px minmax(0, 1fr);
+    }
+
     .metrics-grid {
       border-top: 1px solid rgba(194, 211, 203, 0.14);
       display: grid;
@@ -97,6 +101,24 @@
       accent-color: #79d0d0;
       min-width: 0;
       width: 100%;
+    }
+
+    select {
+      appearance: none;
+      background: #111715;
+      border: 1px solid #43504b;
+      border-radius: 6px;
+      color: #f0eee7;
+      font: 13px/1.2 ui-sans-serif, system-ui, sans-serif;
+      min-height: 30px;
+      min-width: 0;
+      padding: 0 10px;
+      width: 100%;
+    }
+
+    option {
+      background: #101312;
+      color: #f0eee7;
     }
 
     input[type="color"] {
@@ -242,6 +264,10 @@
 <body>
   <div id="container">
     <div class="control-panel">
+      <div class="control-row preset-row">
+        <label for="material-preset">Material</label>
+        <select id="material-preset" name="material-preset"></select>
+      </div>
       <div class="control-row color-row">
         <label for="base-color">Base Color</label>
         <input id="base-color" type="color" value="#b7c7d7">
