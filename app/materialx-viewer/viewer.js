@@ -910,20 +910,16 @@ export class Material
 
         const lights = viewer.getLights();
         const lightData = viewer.getLightData();
-        const radianceTexture = viewer.getRadianceTexture();
+        const radianceTexture = viewer.getShaderRadianceTexture();
         const irradianceTexture = viewer.getIrradianceTexture();
         const gen = viewer.getGenerator();
         const genContext = viewer.getGenContext();
-        genContext.getOptions().hwSrgbEncodeOutput = true;
+        viewer.applyShaderCompilerOptions();
 
         // Perform transparency check on renderable item
         var startTranspCheckTime = performance.now();
         const isTransparent = mx.isTransparentSurface(elem, gen.getTarget());
         genContext.getOptions().hwTransparency = isTransparent;
-        // Always set to complete. 
-        // Can consider option to set to reduced as the parsing of large numbers of uniforms (e.g. on shading models)
-        // can be quite expensive.
-        genContext.getOptions().shaderInterfaceType = mx.ShaderInterfaceType.SHADER_INTERFACE_COMPLETE;
 
         if (logDetailedTime)
             console.log("  - Transparency check time: ", performance.now() - startTranspCheckTime, "ms");
@@ -1637,6 +1633,29 @@ export class Viewer
         return this.genContext;
     }
 
+    setShaderCompilerOptions(options)
+    {
+        this.shaderCompilerOptions = options;
+    }
+
+    setShaderRuntimeOptions(options)
+    {
+        this.shaderRuntimeOptions = options || {};
+    }
+
+    applyShaderCompilerOptions()
+    {
+        if (!this.genContext || !this.shaderCompilerOptions)
+            return;
+
+        const options = this.genContext.getOptions();
+        for (const [key, value] of Object.entries(this.shaderCompilerOptions))
+        {
+            if (value !== undefined)
+                options[key] = value;
+        }
+    }
+
     getLights()
     {
         return this.lights;
@@ -1650,6 +1669,28 @@ export class Viewer
     getRadianceTexture()
     {
         return this.radianceTexture;
+    }
+
+    getShaderRadianceTexture()
+    {
+        if (this.shaderRuntimeOptions?.disableSpecularRadiance)
+            return this.getBlackRadianceTexture();
+
+        return this.getRadianceTexture();
+    }
+
+    getBlackRadianceTexture()
+    {
+        if (!this.blackRadianceTexture)
+        {
+            this.blackRadianceTexture = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1, THREE.RGBAFormat);
+            this.blackRadianceTexture.minFilter = THREE.LinearFilter;
+            this.blackRadianceTexture.magFilter = THREE.LinearFilter;
+            this.blackRadianceTexture.generateMipmaps = false;
+            this.blackRadianceTexture.needsUpdate = true;
+        }
+
+        return this.blackRadianceTexture;
     }
 
     getIrradianceTexture()
@@ -1677,10 +1718,13 @@ export class Viewer
     // MaterialX code generator and context
     generator = null;
     genContext = null;
+    shaderCompilerOptions = null;
+    shaderRuntimeOptions = {};
 
     // Lighting information
     lights = null;
     lightData = null;
     radianceTexture = null;
     irradianceTexture = null;
+    blackRadianceTexture = null;
 }

@@ -19,6 +19,7 @@ export function getFilePaths() {
 const runtimeBaseUrl = new URL('./vendor/materialx-runtime/', import.meta.url);
 const defaultMaterial = 'vendor/MaterialX/resources/Materials/Examples/StandardSurface/standard_surface_default.mtlx';
 const defaultGeometry = 'vendor/MaterialX/resources/Geometry/shaderball.glb';
+const navigationDebounceMs = 180;
 const queryParams = new URLSearchParams(document.location.search);
 const qualityProfiles = {
   performance: {
@@ -53,6 +54,55 @@ const antialiasProfiles = {
     enabled: false,
   },
 };
+const shaderSpecularProfiles = {
+  fis: {
+    label: 'Filtered sampling',
+    enumName: 'SPECULAR_ENVIRONMENT_FIS',
+  },
+  prefilter: {
+    label: 'Prefiltered map',
+    enumName: 'SPECULAR_ENVIRONMENT_PREFILTER',
+  },
+  none: {
+    label: 'None',
+    enumName: 'SPECULAR_ENVIRONMENT_PREFILTER',
+    disableRadiance: true,
+  },
+};
+const shaderAlbedoProfiles = {
+  'analytic': {
+    label: 'Analytic',
+    enumName: 'DIRECTIONAL_ALBEDO_ANALYTIC',
+  },
+  'table': {
+    label: 'Table lookup',
+    enumName: 'DIRECTIONAL_ALBEDO_TABLE',
+  },
+  'monte-carlo': {
+    label: 'Monte Carlo',
+    enumName: 'DIRECTIONAL_ALBEDO_MONTE_CARLO',
+  },
+};
+const shaderInterfaceProfiles = {
+  complete: {
+    label: 'Complete',
+    enumName: 'SHADER_INTERFACE_COMPLETE',
+  },
+  reduced: {
+    label: 'Reduced',
+    enumName: 'SHADER_INTERFACE_REDUCED',
+  },
+};
+const shaderSrgbProfiles = {
+  on: {
+    label: 'On',
+    enabled: true,
+  },
+  off: {
+    label: 'Off',
+    enabled: false,
+  },
+};
 
 let renderer;
 let orbitControls;
@@ -68,7 +118,13 @@ let materialFilename = getRequestedMaterialPath();
 let geometryFilename = getRequestedGeometryPath();
 let qualityMode = getRequestedQualityMode();
 let antialiasMode = getRequestedAntialiasMode();
+let shaderSpecularMode = getRequestedProfileMode('specular', shaderSpecularProfiles, 'fis');
+let shaderAlbedoMode = getRequestedProfileMode('albedo', shaderAlbedoProfiles, 'analytic');
+let shaderInterfaceMode = getRequestedProfileMode('interface', shaderInterfaceProfiles, 'complete');
+let shaderSrgbMode = getRequestedProfileMode('srgb', shaderSrgbProfiles, 'on');
 let interactiveQualityRestoreTimer;
+let materialNavigationTimer;
+let geometryNavigationTimer;
 let useInteractivePixelRatio = false;
 let materialXResourcePaths = [];
 
@@ -90,6 +146,11 @@ function getRequestedAntialiasMode() {
   if (['0', 'false', 'off', 'none'].includes(requested)) return 'off';
   if (['1', 'true', 'on', 'msaa'].includes(requested)) return 'on';
   return 'on';
+}
+
+function getRequestedProfileMode(paramName, profiles, fallback) {
+  const requested = queryParams.get(paramName)?.toLowerCase();
+  return requested && Object.hasOwn(profiles, requested) ? requested : fallback;
 }
 
 function getQualityProfile(mode = qualityMode) {
@@ -182,6 +243,18 @@ function populateAntialiasSelect(select) {
   select.value = antialiasMode;
 }
 
+function populateProfileSelect(select, profiles, selectedMode) {
+  select.replaceChildren();
+  for (const [mode, profile] of Object.entries(profiles)) {
+    const option = document.createElement('option');
+    option.value = mode;
+    option.textContent = profile.label;
+    select.append(option);
+  }
+
+  select.value = selectedMode;
+}
+
 function getUpdatedUrl(updates, removeKeys = []) {
   const params = new URLSearchParams(document.location.search);
   for (const key of removeKeys) {
@@ -210,6 +283,15 @@ function getMaterialUrl(file) {
 
 function getGeometryUrl(file) {
   return getUpdatedUrl({ model: prettyName(file) }, ['geom']);
+}
+
+function getShaderCompilerUrl() {
+  return getUpdatedUrl({
+    specular: shaderSpecularMode,
+    albedo: shaderAlbedoMode,
+    interface: shaderInterfaceMode,
+    srgb: shaderSrgbMode,
+  });
 }
 
 function updateSelectionUrl(updates) {
@@ -270,6 +352,70 @@ function handleAntialiasChange(event) {
   const nextMode = event.target.value;
   if (nextMode === antialiasMode) return;
   window.location.assign(getAntialiasUrl(nextMode));
+}
+
+function getEnumValue(enumObject, enumName) {
+  return enumObject ? enumObject[enumName] : undefined;
+}
+
+function getShaderCompilerOptions(mx) {
+  const specularProfile = shaderSpecularProfiles[shaderSpecularMode];
+  return {
+    genOptions: {
+      hwSpecularEnvironmentMethod: getEnumValue(
+        mx.HwSpecularEnvironmentMethod,
+        specularProfile.enumName,
+      ),
+      hwDirectionalAlbedoMethod: getEnumValue(
+        mx.HwDirectionalAlbedoMethod,
+        shaderAlbedoProfiles[shaderAlbedoMode].enumName,
+      ),
+      shaderInterfaceType: getEnumValue(
+        mx.ShaderInterfaceType,
+        shaderInterfaceProfiles[shaderInterfaceMode].enumName,
+      ),
+      hwSrgbEncodeOutput: shaderSrgbProfiles[shaderSrgbMode].enabled,
+    },
+    runtimeOptions: {
+      disableSpecularRadiance: Boolean(specularProfile.disableRadiance),
+    },
+  };
+}
+
+function applyShaderCompilerOptions() {
+  if (!viewer?.getMx()) return;
+  const options = getShaderCompilerOptions(viewer.getMx());
+  viewer.setShaderCompilerOptions(options.genOptions);
+  viewer.setShaderRuntimeOptions(options.runtimeOptions);
+  viewer.applyShaderCompilerOptions();
+}
+
+async function reloadMaterialForShaderCompilerOptions() {
+  applyShaderCompilerOptions();
+  await loadSelectedMaterial(materialFilename, { updateUrl: false });
+}
+
+function handleShaderCompilerOptionChange(event) {
+  const nextMode = event.target.value;
+
+  if (event.target.id === 'shader-specular') {
+    if (nextMode === shaderSpecularMode) return;
+    shaderSpecularMode = nextMode;
+  } else if (event.target.id === 'shader-albedo') {
+    if (nextMode === shaderAlbedoMode) return;
+    shaderAlbedoMode = nextMode;
+  } else if (event.target.id === 'shader-interface') {
+    if (nextMode === shaderInterfaceMode) return;
+    shaderInterfaceMode = nextMode;
+  } else if (event.target.id === 'shader-srgb') {
+    if (nextMode === shaderSrgbMode) return;
+    shaderSrgbMode = nextMode;
+  } else {
+    return;
+  }
+
+  history.replaceState(null, '', getShaderCompilerUrl());
+  reloadMaterialForShaderCompilerOptions().catch(reportError);
 }
 
 async function loadMaterialX() {
@@ -342,14 +488,34 @@ function stepSelect(selectId, direction) {
   return select.value;
 }
 
+function scheduleMaterialNavigationLoad(file) {
+  materialFilename = file;
+  history.replaceState(null, '', getMaterialUrl(file));
+  setStatus(`Material queued: ${prettyName(file)}`);
+  window.clearTimeout(materialNavigationTimer);
+  materialNavigationTimer = window.setTimeout(() => {
+    loadSelectedMaterial(file, { updateUrl: false }).catch(reportError);
+  }, navigationDebounceMs);
+}
+
+function scheduleGeometryNavigationLoad(file) {
+  geometryFilename = file;
+  history.replaceState(null, '', getGeometryUrl(file));
+  setStatus(`Geometry queued: ${prettyName(file)}`);
+  window.clearTimeout(geometryNavigationTimer);
+  geometryNavigationTimer = window.setTimeout(() => {
+    loadSelectedGeometry(file, { updateUrl: false }).catch(reportError);
+  }, navigationDebounceMs);
+}
+
 function cycleMaterial(direction) {
   const file = stepSelect('materials', direction);
-  if (file) loadSelectedMaterial(file).catch(reportError);
+  if (file) scheduleMaterialNavigationLoad(file);
 }
 
 function cycleGeometry(direction) {
   const file = stepSelect('geometry', direction);
-  if (file) loadSelectedGeometry(file).catch(reportError);
+  if (file) scheduleGeometryNavigationLoad(file);
 }
 
 function handleKeyEvents(event) {
@@ -417,6 +583,7 @@ async function loadSelectedMaterial(file, { updateUrl = true } = {}) {
   }
   setStatus(`Loading material: ${prettyName(file)}`);
   viewer.getEditor().initialize();
+  applyShaderCompilerOptions();
   await viewer.getMaterial().loadMaterials(viewer, materialFilename);
   viewer.getEditor().updateProperties(0.9);
   setStatus(`Material ready: ${prettyName(file)}`);
@@ -439,6 +606,10 @@ async function initializeViewer() {
   const geometrySelect = document.getElementById('geometry');
   const qualitySelect = document.getElementById('quality');
   const antialiasSelect = document.getElementById('antialias');
+  const shaderSpecularSelect = document.getElementById('shader-specular');
+  const shaderAlbedoSelect = document.getElementById('shader-albedo');
+  const shaderInterfaceSelect = document.getElementById('shader-interface');
+  const shaderSrgbSelect = document.getElementById('shader-srgb');
 
   ({ materialXResourcePaths } = await loadAssetManifest());
   const materialPaths = getMaterialPaths();
@@ -450,6 +621,10 @@ async function initializeViewer() {
   updateSelectionUrl({ material: prettyName(materialFilename), model: prettyName(geometryFilename) });
   populateQualitySelect(qualitySelect);
   populateAntialiasSelect(antialiasSelect);
+  populateProfileSelect(shaderSpecularSelect, shaderSpecularProfiles, shaderSpecularMode);
+  populateProfileSelect(shaderAlbedoSelect, shaderAlbedoProfiles, shaderAlbedoMode);
+  populateProfileSelect(shaderInterfaceSelect, shaderInterfaceProfiles, shaderInterfaceMode);
+  populateProfileSelect(shaderSrgbSelect, shaderSrgbProfiles, shaderSrgbMode);
 
   viewer = Viewer.create();
   viewer.getScene().setGeometryURL(geometryFilename);
@@ -484,6 +659,7 @@ async function initializeViewer() {
   ]);
 
   await viewer.initialize(mx, renderer, radianceTexture, irradianceTexture, lightRigXml);
+  applyShaderCompilerOptions();
   await viewer.getScene().loadGeometry(viewer, orbitControls);
   await viewer.getMaterial().loadMaterials(viewer, materialFilename);
   await viewer.getMaterial().updateMaterialAssignments(viewer, '');
@@ -493,9 +669,12 @@ async function initializeViewer() {
   geometrySelect.addEventListener('change', event => loadSelectedGeometry(event.target.value).catch(reportError));
   qualitySelect.addEventListener('change', handleQualityChange);
   antialiasSelect.addEventListener('change', handleAntialiasChange);
+  shaderSpecularSelect.addEventListener('change', handleShaderCompilerOptionChange);
+  shaderAlbedoSelect.addEventListener('change', handleShaderCompilerOptionChange);
+  shaderInterfaceSelect.addEventListener('change', handleShaderCompilerOptionChange);
+  shaderSrgbSelect.addEventListener('change', handleShaderCompilerOptionChange);
   window.addEventListener('resize', onWindowResize);
   document.addEventListener('keydown', handleKeyEvents);
-  canvas.addEventListener('keydown', handleKeyEvents);
   document.addEventListener('drop', dropHandler, false);
   document.addEventListener('dragover', dragOverHandler, false);
 
