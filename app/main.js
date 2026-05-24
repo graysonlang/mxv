@@ -19,6 +19,29 @@ export function getFilePaths() {
 const runtimeBaseUrl = new URL('./vendor/materialx-runtime/', import.meta.url);
 const defaultMaterial = 'vendor/MaterialX/resources/Materials/Examples/StandardSurface/standard_surface_default.mtlx';
 const defaultGeometry = 'vendor/MaterialX/resources/Geometry/shaderball.glb';
+const queryParams = new URLSearchParams(document.location.search);
+const qualityProfiles = {
+  performance: {
+    label: 'Performance: DPR 1, AA off',
+    maxPixelRatio: 1,
+    antialias: false,
+  },
+  balanced: {
+    label: 'Balanced: DPR 1.25, AA off',
+    maxPixelRatio: 1.25,
+    antialias: false,
+  },
+  high: {
+    label: 'High: DPR 1.5, AA on',
+    maxPixelRatio: 1.5,
+    antialias: true,
+  },
+  native: {
+    label: 'Native: DPR 2, AA on',
+    maxPixelRatio: 2,
+    antialias: true,
+  },
+};
 
 let renderer;
 let orbitControls;
@@ -30,8 +53,22 @@ let frameCount = 0;
 let turntableEnabled = false;
 let turntableStep = 0;
 let captureRequested = false;
-let materialFilename = new URLSearchParams(document.location.search).get('file') || defaultMaterial;
+let materialFilename = queryParams.get('file') || defaultMaterial;
+let qualityMode = getRequestedQualityMode();
 let materialXResourcePaths = [];
+
+function getRequestedQualityMode() {
+  const requested = queryParams.get('quality') || 'native';
+  return Object.hasOwn(qualityProfiles, requested) ? requested : 'native';
+}
+
+function getQualityProfile(mode = qualityMode) {
+  return qualityProfiles[mode] || qualityProfiles.balanced;
+}
+
+function getRenderPixelRatio(profile = getQualityProfile()) {
+  return Math.min(window.devicePixelRatio || 1, profile.maxPixelRatio);
+}
 
 function prettyName(path) {
   const file = path.split('/').pop() || path;
@@ -66,9 +103,52 @@ function populateSelect(select, paths, fallback) {
   return select.value;
 }
 
+function populateQualitySelect(select) {
+  select.replaceChildren();
+  for (const [mode, profile] of Object.entries(qualityProfiles)) {
+    const option = document.createElement('option');
+    option.value = mode;
+    option.textContent = profile.label;
+    select.append(option);
+  }
+
+  select.value = qualityMode;
+}
+
+function getQualityUrl(mode) {
+  const params = new URLSearchParams(document.location.search);
+  params.set('quality', mode);
+  return `${document.location.pathname}?${params.toString()}${document.location.hash}`;
+}
+
 function setStatus(message) {
   const status = document.querySelector('[data-status]');
   if (status) status.textContent = message;
+}
+
+function applyRenderQuality() {
+  const profile = getQualityProfile();
+  renderer.setPixelRatio(getRenderPixelRatio(profile));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+function handleQualityChange(event) {
+  const nextMode = event.target.value;
+  if (nextMode === qualityMode) return;
+
+  const currentProfile = getQualityProfile();
+  const nextProfile = getQualityProfile(nextMode);
+  const nextUrl = getQualityUrl(nextMode);
+
+  if (currentProfile.antialias !== nextProfile.antialias) {
+    window.location.assign(nextUrl);
+    return;
+  }
+
+  qualityMode = nextMode;
+  history.replaceState(null, '', nextUrl);
+  applyRenderQuality();
+  setStatus(`Quality: ${nextProfile.label}`);
 }
 
 async function loadMaterialX() {
@@ -107,7 +187,7 @@ function captureFrame() {
 
 function onWindowResize() {
   viewer.getScene().updateCamera();
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  applyRenderQuality();
 }
 
 function handleKeyEvents(event) {
@@ -170,20 +250,26 @@ async function initializeViewer() {
   const canvas = document.getElementById('webglcanvas');
   const materialsSelect = document.getElementById('materials');
   const geometrySelect = document.getElementById('geometry');
+  const qualitySelect = document.getElementById('quality');
 
   ({ materialXResourcePaths } = await loadAssetManifest());
   const materialPaths = getMaterialPaths();
   const geometryPaths = getGeometryPaths();
   materialFilename = populateSelect(materialsSelect, materialPaths, materialFilename);
   const geometryFilename = populateSelect(geometrySelect, geometryPaths, defaultGeometry);
+  populateQualitySelect(qualitySelect);
 
   viewer = Viewer.create();
   viewer.getScene().setGeometryURL(geometryFilename);
   viewer.getScene().initialize();
 
-  renderer = new THREE.WebGLRenderer({ antialias: true, canvas });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  const qualityProfile = getQualityProfile();
+  renderer = new THREE.WebGLRenderer({
+    antialias: qualityProfile.antialias,
+    canvas,
+    powerPreference: 'high-performance',
+  });
+  applyRenderQuality();
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.debug.checkShaderErrors = false;
 
@@ -211,6 +297,7 @@ async function initializeViewer() {
 
   materialsSelect.addEventListener('change', event => loadSelectedMaterial(event.target.value).catch(reportError));
   geometrySelect.addEventListener('change', event => loadSelectedGeometry(event.target.value).catch(reportError));
+  qualitySelect.addEventListener('change', handleQualityChange);
   window.addEventListener('resize', onWindowResize);
   document.addEventListener('keydown', handleKeyEvents);
   canvas.addEventListener('keydown', handleKeyEvents);
