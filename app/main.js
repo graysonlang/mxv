@@ -22,30 +22,35 @@ const defaultGeometry = 'vendor/MaterialX/resources/Geometry/shaderball.glb';
 const queryParams = new URLSearchParams(document.location.search);
 const qualityProfiles = {
   performance: {
-    label: 'Performance: DPR 1, AA off',
+    label: 'Performance: DPR 1',
     maxPixelRatio: 1,
-    antialias: false,
   },
   balanced: {
-    label: 'Balanced: DPR 1.25, AA off',
+    label: 'Balanced: DPR 1.25',
     maxPixelRatio: 1.25,
-    antialias: false,
   },
   high: {
-    label: 'High: DPR 1.5, AA on',
+    label: 'High: DPR 1.5',
     maxPixelRatio: 1.5,
-    antialias: true,
   },
   native: {
-    label: 'Native: DPR 2, AA on',
+    label: 'Native: DPR 2',
     maxPixelRatio: 2,
-    antialias: true,
   },
   adaptive: {
     label: 'Adaptive: DPR 1 moving, DPR 2 idle',
     maxPixelRatio: 2,
     interactiveMaxPixelRatio: 1,
-    antialias: true,
+  },
+};
+const antialiasProfiles = {
+  on: {
+    label: 'On',
+    enabled: true,
+  },
+  off: {
+    label: 'Off',
+    enabled: false,
   },
 };
 
@@ -61,6 +66,7 @@ let turntableStep = 0;
 let captureRequested = false;
 let materialFilename = queryParams.get('file') || defaultMaterial;
 let qualityMode = getRequestedQualityMode();
+let antialiasMode = getRequestedAntialiasMode();
 let interactiveQualityRestoreTimer;
 let useInteractivePixelRatio = false;
 let materialXResourcePaths = [];
@@ -70,8 +76,19 @@ function getRequestedQualityMode() {
   return Object.hasOwn(qualityProfiles, requested) ? requested : 'native';
 }
 
+function getRequestedAntialiasMode() {
+  const requested = (queryParams.get('antialias') || queryParams.get('aa') || 'on').toLowerCase();
+  if (['0', 'false', 'off', 'none'].includes(requested)) return 'off';
+  if (['1', 'true', 'on', 'msaa'].includes(requested)) return 'on';
+  return 'on';
+}
+
 function getQualityProfile(mode = qualityMode) {
   return qualityProfiles[mode] || qualityProfiles.balanced;
+}
+
+function getAntialiasProfile(mode = antialiasMode) {
+  return antialiasProfiles[mode] || antialiasProfiles.on;
 }
 
 function getRenderPixelRatio(profile = getQualityProfile()) {
@@ -130,9 +147,34 @@ function populateQualitySelect(select) {
   select.value = qualityMode;
 }
 
-function getQualityUrl(mode) {
+function populateAntialiasSelect(select) {
+  select.replaceChildren();
+  for (const [mode, profile] of Object.entries(antialiasProfiles)) {
+    const option = document.createElement('option');
+    option.value = mode;
+    option.textContent = profile.label;
+    select.append(option);
+  }
+
+  select.value = antialiasMode;
+}
+
+function getUpdatedUrl(updates) {
   const params = new URLSearchParams(document.location.search);
-  params.set('quality', mode);
+  for (const [key, value] of Object.entries(updates)) {
+    params.set(key, value);
+  }
+  return `${document.location.pathname}?${params.toString()}${document.location.hash}`;
+}
+
+function getQualityUrl(mode) {
+  return getUpdatedUrl({ quality: mode });
+}
+
+function getAntialiasUrl(mode) {
+  const params = new URLSearchParams(document.location.search);
+  params.delete('aa');
+  params.set('antialias', mode);
   return `${document.location.pathname}?${params.toString()}${document.location.hash}`;
 }
 
@@ -173,14 +215,8 @@ function handleQualityChange(event) {
   const nextMode = event.target.value;
   if (nextMode === qualityMode) return;
 
-  const currentProfile = getQualityProfile();
   const nextProfile = getQualityProfile(nextMode);
   const nextUrl = getQualityUrl(nextMode);
-
-  if (currentProfile.antialias !== nextProfile.antialias) {
-    window.location.assign(nextUrl);
-    return;
-  }
 
   qualityMode = nextMode;
   resetInteractiveRenderQuality();
@@ -190,6 +226,12 @@ function handleQualityChange(event) {
   }
   applyRenderQuality();
   setStatus(`Quality: ${nextProfile.label}`);
+}
+
+function handleAntialiasChange(event) {
+  const nextMode = event.target.value;
+  if (nextMode === antialiasMode) return;
+  window.location.assign(getAntialiasUrl(nextMode));
 }
 
 async function loadMaterialX() {
@@ -297,6 +339,7 @@ async function initializeViewer() {
   const materialsSelect = document.getElementById('materials');
   const geometrySelect = document.getElementById('geometry');
   const qualitySelect = document.getElementById('quality');
+  const antialiasSelect = document.getElementById('antialias');
 
   ({ materialXResourcePaths } = await loadAssetManifest());
   const materialPaths = getMaterialPaths();
@@ -304,14 +347,15 @@ async function initializeViewer() {
   materialFilename = populateSelect(materialsSelect, materialPaths, materialFilename);
   const geometryFilename = populateSelect(geometrySelect, geometryPaths, defaultGeometry);
   populateQualitySelect(qualitySelect);
+  populateAntialiasSelect(antialiasSelect);
 
   viewer = Viewer.create();
   viewer.getScene().setGeometryURL(geometryFilename);
   viewer.getScene().initialize();
 
-  const qualityProfile = getQualityProfile();
+  const antialiasProfile = getAntialiasProfile();
   renderer = new THREE.WebGLRenderer({
-    antialias: qualityProfile.antialias,
+    antialias: antialiasProfile.enabled,
     canvas,
     powerPreference: 'high-performance',
   });
@@ -346,6 +390,7 @@ async function initializeViewer() {
   materialsSelect.addEventListener('change', event => loadSelectedMaterial(event.target.value).catch(reportError));
   geometrySelect.addEventListener('change', event => loadSelectedGeometry(event.target.value).catch(reportError));
   qualitySelect.addEventListener('change', handleQualityChange);
+  antialiasSelect.addEventListener('change', handleAntialiasChange);
   window.addEventListener('resize', onWindowResize);
   document.addEventListener('keydown', handleKeyEvents);
   canvas.addEventListener('keydown', handleKeyEvents);
