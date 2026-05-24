@@ -89,6 +89,19 @@ Potential pop-out modes:
 
 This lets the main app stay responsive and product-focused while giving advanced workflows a place to become more specialized.
 
+## Implementation Roadmap
+
+Use the WebGPU lab as a measured staging area. Keep each phase small enough to validate independently.
+
+| Phase | Status | Goal | Notes |
+| --- | --- | --- | --- |
+| 1. WebGPU lab baseline | In progress | Keep a separate `/webgpu.html` entry point that can exercise Three.js `WebGPURenderer`, WebGL2 fallback, model loading, environment loading, orbit controls, FPS display, and MaterialX shader generation inspection. | This is a renderer lab, not a direct MaterialX WGSL renderer yet. |
+| 2. Instrumentation | Next | Measure backend, first-frame time, model load time, HDR/environment setup time, MaterialX runtime load time, shader generation time, average FPS, and frame-time stability. | These metrics should be visible in the lab UI and easy to compare across WebGPU and fallback modes. |
+| 3. Material state sync | Next | Drive both the visible Three.js proxy material and generated MaterialX sample from the same material state. | This keeps the preview controls, MaterialX source, and shadergen panel from drifting apart. |
+| 4. Generator reality check | Next | Verify what the pinned MaterialX `WgslShaderGenerator` currently emits, whether a newer MaterialX ref improves WebGPU/WGSL output, and what it would take to consume it directly. | Current pinned output appears Vulkan-GLSL-shaped rather than direct WGSL. |
+| 5. Direct WebGPU shader spike | Future | Render one mesh and one generated material through a minimal direct WebGPU pipeline. | Do this only after instrumentation and generator checks clarify the likely payoff. |
+| 6. Product integration decision | Future | Decide whether WebGPU graduates into a supported pro-renderer path, remains a lab feature, or is deferred. | Use measured designer-visible wins as the gate. |
+
 ## WebGPU Spike Plan
 
 Before committing to a full WebGPU MaterialX renderer, run a narrow benchmark spike:
