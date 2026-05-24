@@ -53,7 +53,7 @@ Fetch or update MaterialX:
 npm run setup:materialx
 ```
 
-By default, setup uses the known-good MaterialX source pinned in `materialx-source.json`. You can override that with environment variables or flags when testing an upgrade, branch, fork, tag, or commit:
+By default, setup uses the known-good MaterialX source pinned in `materialx-source.json`. The clone is a blobless partial clone, and the top-level MaterialX `documents` folder is omitted with sparse checkout. You can override the source with environment variables or flags when testing an upgrade, branch, fork, tag, or commit:
 
 ```sh
 MATERIALX_REF=main npm run setup:materialx

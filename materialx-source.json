@@ -1,4 +1,7 @@
 {
   "repo": "https://github.com/AcademySoftwareFoundation/MaterialX.git",
-  "ref": "v1.39.5"
+  "ref": "v1.39.5",
+  "sparseExcludes": [
+    "documents"
+  ]
 }

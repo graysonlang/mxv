@@ -28,6 +28,7 @@ function readSourceConfig() {
 const sourceConfig = readSourceConfig();
 const repo = args.get('repo') || process.env.MATERIALX_REPO || sourceConfig.repo || 'https://github.com/AcademySoftwareFoundation/MaterialX.git';
 const ref = args.get('ref') || process.env.MATERIALX_REF || sourceConfig.ref || 'main';
+const sparseExcludes = Array.isArray(sourceConfig.sparseExcludes) ? sourceConfig.sparseExcludes : [];
 const force = args.has('force') || process.env.MATERIALX_VENDOR_FORCE === '1';
 
 function run(command, commandArgs, options = {}) {
@@ -58,12 +59,35 @@ function isCommitHash(value) {
   return /^[0-9a-f]{7,40}$/i.test(value);
 }
 
+function normalizeSparsePath(value) {
+  if (typeof value !== 'string') return '';
+  return value.trim().replace(/^\/+|\/+$/g, '');
+}
+
+function configureSparseCheckout() {
+  const excludes = sparseExcludes.map(normalizeSparsePath).filter(Boolean);
+  if (excludes.length === 0) return;
+
+  run('git', ['sparse-checkout', 'init', '--no-cone'], { cwd: materialXDir });
+  run('git', [
+    'sparse-checkout',
+    'set',
+    '/*',
+    ...excludes.map(excludePath => `!/${excludePath}/`),
+  ], { cwd: materialXDir });
+}
+
+function updateSubmodules() {
+  run('git', ['submodule', 'update', '--init', '--recursive', '--depth=1'], { cwd: materialXDir });
+}
+
 function checkoutRef() {
-  run('git', ['fetch', '--tags', 'origin'], { cwd: materialXDir });
+  configureSparseCheckout();
+  run('git', ['fetch', '--filter=blob:none', '--tags', 'origin'], { cwd: materialXDir });
   let checkout = run('git', ['checkout', ref], { cwd: materialXDir, allowFailure: true });
 
   if (checkout.status !== 0) {
-    run('git', ['fetch', '--depth=1', 'origin', ref], { cwd: materialXDir });
+    run('git', ['fetch', '--filter=blob:none', 'origin', ref], { cwd: materialXDir });
     checkout = run('git', ['checkout', '--detach', 'FETCH_HEAD'], { cwd: materialXDir });
   }
 
@@ -72,30 +96,35 @@ function checkoutRef() {
     run('git', ['pull', '--ff-only'], { cwd: materialXDir });
   }
 
-  run('git', ['submodule', 'update', '--init', '--recursive'], { cwd: materialXDir });
+  updateSubmodules();
 }
 
 function cloneAtRef() {
   if (!isCommitHash(ref)) {
     const clone = run('git', [
       'clone',
-      '--depth=1',
+      '--filter=blob:none',
+      '--no-checkout',
       '--branch', ref,
-      '--recurse-submodules',
-      '--shallow-submodules',
       repo,
       materialXDir,
     ], { allowFailure: true });
 
-    if (clone.status === 0) return;
+    if (clone.status === 0) {
+      configureSparseCheckout();
+      run('git', ['checkout', ref], { cwd: materialXDir });
+      updateSubmodules();
+      return;
+    }
     rmSync(materialXDir, { recursive: true, force: true });
   }
 
   console.log(`Falling back to commit checkout for MaterialX ${ref}...`);
-  run('git', ['clone', '--depth=1', '--no-checkout', repo, materialXDir]);
-  run('git', ['fetch', '--depth=1', 'origin', ref], { cwd: materialXDir });
+  run('git', ['clone', '--filter=blob:none', '--no-checkout', repo, materialXDir]);
+  configureSparseCheckout();
+  run('git', ['fetch', '--filter=blob:none', 'origin', ref], { cwd: materialXDir });
   run('git', ['checkout', '--detach', 'FETCH_HEAD'], { cwd: materialXDir });
-  run('git', ['submodule', 'update', '--init', '--recursive', '--depth=1'], { cwd: materialXDir });
+  updateSubmodules();
 }
 
 mkdirSync(vendorDir, { recursive: true });
