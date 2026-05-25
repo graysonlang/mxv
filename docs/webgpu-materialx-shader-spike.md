@@ -91,7 +91,7 @@ Use this as a periodic check, not as a blocker for the exploratory spike.
 | --- | --- | --- |
 | 1. Capture shader contract | Generate a simple material with ESSL and Wgsl outputs, list uniforms, textures, varyings, attributes, and resource bindings. | Done: initial contract captured for `standard` and `pearl`. |
 | 2. Build minimal WebGPU draw | Render a static mesh with a hand-authored WGSL shader and the same camera framing as the lab. | Done: initial `/webgpu-direct.html` proof draw added. |
-| 3. Adapt one MaterialX sample | Translate the smallest representative generated shader into browser WGSL and bind the required uniforms/textures. | In progress: shader dump workflow added; browser-WGSL port remains open. |
+| 3. Adapt one MaterialX sample | Translate the smallest representative generated shader into browser WGSL and bind the required uniforms/textures. | In progress: `/webgpu-direct.html` now binds the MaterialX-style WebGPU resource slots and shades from the generated public-uniform contract; full generated-shader translation remains open. |
 | 4. Add one complex sample | Try a more realistic material such as pearl after the simple case works. | Stop if the second material needs many special cases. |
 | 5. Measure against WebGL | Compare compile/setup time, steady FPS, frame stability, and interaction latency against the existing WebGL path. | Stop if performance is similar and implementation complexity is materially higher. |
 | 6. Decide next step | Choose product path: continue WebGPU backend, keep as lab, or defer. | Decide based on measured designer-visible benefit. |
@@ -249,7 +249,7 @@ Defer full WebGPU backend work if:
 
 ## Immediate Next Step
 
-Start Phase 3: adapt the smallest generated MaterialX shader path after verifying `/webgpu-direct.html` on a WebGPU-capable browser.
+Continue Phase 3: use the direct WebGPU binding bridge to measure whether the MaterialX-shaped path has enough upside to justify deeper shader adaptation work.
 
 Use the shader dump command to create local generated-source fixtures:
 
@@ -269,4 +269,26 @@ The Phase 2 proof draw now covers:
 - Render with position, normal, and tangent attributes.
 - Use the same camera FOV, near plane, far plane, and approximate fit distance as the lab.
 
-The Phase 3 first step should replace only the hand-authored fragment behavior, while keeping the Phase 2 browser WebGPU setup, mesh upload, camera, and metrics intact.
+The Phase 3 bridge replaces the original proof shader's single combined uniform block with the MaterialX-style resource bindings while keeping the Phase 2 browser WebGPU setup, mesh upload, camera, and metrics intact.
+
+## Phase 3 Progress
+
+The direct WebGPU proof now has a MaterialX-shaped binding harness:
+
+- `binding=0`: vertex private uniform data for world, view-projection, and inverse-transpose matrices.
+- `binding=1`: pixel private uniform data for environment matrix, environment settings, view position, active-light count, and direct-lab light direction.
+- `binding=2` and `binding=3`: placeholder environment radiance texture and sampler.
+- `binding=4` and `binding=5`: placeholder environment irradiance texture and sampler.
+- `binding=6`: public standard-surface material values in the same 39-port order reported by the MaterialX generator.
+- `binding=7`: placeholder light data block.
+
+This is not yet a direct translation of the generated `wgsl-complete.pixel.glsl` output. Instead, it is a browser-WGSL bridge that keeps the generated binding numbers and public-uniform semantic order while using a compact hand-authored standard-surface approximation. That gives the spike a real WebGPU resource contract to measure before investing in a broader shader translator.
+
+The direct page includes a material selector for the generated `standard` and `pearl` sample values, and accepts the same state through the URL:
+
+```text
+http://127.0.0.1:8000/webgpu-direct.html?material=standard
+http://127.0.0.1:8000/webgpu-direct.html?material=pearl
+```
+
+Next, compare the direct bridge against the WebGL viewer for setup cost, steady FPS, and material-switch latency. If those numbers look promising, the next technical step is to decide whether to port selected generated closure functions into WGSL by hand or build a tiny translator for the narrow subset used by `standard_surface`.

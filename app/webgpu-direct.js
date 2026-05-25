@@ -13,20 +13,164 @@ const cameraFar = 100;
 const sphereRadius = 0.8;
 const initialDistance = sphereRadius * 2;
 const maxPixelRatio = 2;
-const uniformFloatCount = 64;
+const queryParams = new URLSearchParams(document.location.search);
+const privateVertexFloatCount = 48;
+const privatePixelFloatCount = 28;
+const publicUniformPortCount = 39;
+const publicUniformFloatCount = publicUniformPortCount * 4;
+const lightDataFloatCount = 4;
 
-const shaderSource = `
-struct Uniforms {
-  modelViewProjectionMatrix: mat4x4<f32>,
-  modelMatrix: mat4x4<f32>,
-  normalMatrix: mat4x4<f32>,
-  cameraPosition: vec4<f32>,
-  baseColor: vec4<f32>,
-  material: vec4<f32>,
-  lightDirection: vec4<f32>,
+const materialPortIndex = {
+  base: 0,
+  baseColor: 1,
+  diffuseRoughness: 2,
+  metalness: 3,
+  specular: 4,
+  specularColor: 5,
+  specularRoughness: 6,
+  specularIor: 7,
+  specularAnisotropy: 8,
+  specularRotation: 9,
+  transmission: 10,
+  transmissionColor: 11,
+  transmissionDepth: 12,
+  transmissionScatter: 13,
+  transmissionScatterAnisotropy: 14,
+  transmissionDispersion: 15,
+  transmissionExtraRoughness: 16,
+  subsurface: 17,
+  subsurfaceColor: 18,
+  subsurfaceRadius: 19,
+  subsurfaceScale: 20,
+  subsurfaceAnisotropy: 21,
+  sheen: 22,
+  sheenColor: 23,
+  sheenRoughness: 24,
+  coat: 25,
+  coatColor: 26,
+  coatRoughness: 27,
+  coatAnisotropy: 28,
+  coatRotation: 29,
+  coatIor: 30,
+  coatAffectColor: 31,
+  coatAffectRoughness: 32,
+  thinFilmThickness: 33,
+  thinFilmIor: 34,
+  emission: 35,
+  emissionColor: 36,
+  opacity: 37,
+  thinWalled: 38,
 };
 
-@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+const baseMaterialPorts = {
+  base: 1,
+  baseColor: [0.8, 0.8, 0.8],
+  diffuseRoughness: 0.2,
+  metalness: 0,
+  specular: 1,
+  specularColor: [1, 1, 1],
+  specularRoughness: 0.2,
+  specularIor: 1.5,
+  specularAnisotropy: 0,
+  specularRotation: 0,
+  transmission: 0,
+  transmissionColor: [1, 1, 1],
+  transmissionDepth: 0,
+  transmissionScatter: [0, 0, 0],
+  transmissionScatterAnisotropy: 0,
+  transmissionDispersion: 0,
+  transmissionExtraRoughness: 0,
+  subsurface: 0,
+  subsurfaceColor: [1, 1, 1],
+  subsurfaceRadius: [1, 1, 1],
+  subsurfaceScale: 1,
+  subsurfaceAnisotropy: 0,
+  sheen: 0,
+  sheenColor: [1, 1, 1],
+  sheenRoughness: 0.3,
+  coat: 0,
+  coatColor: [1, 1, 1],
+  coatRoughness: 0.1,
+  coatAnisotropy: 0,
+  coatRotation: 0,
+  coatIor: 1.5,
+  coatAffectColor: 0,
+  coatAffectRoughness: 0,
+  thinFilmThickness: 0,
+  thinFilmIor: 1.5,
+  emission: 0,
+  emissionColor: [1, 1, 1],
+  opacity: [1, 1, 1],
+  thinWalled: 0,
+};
+
+const materialSamples = {
+  standard: {
+    label: 'Standard',
+    ports: baseMaterialPorts,
+  },
+  pearl: {
+    label: 'Pearl',
+    ports: {
+      ...baseMaterialPorts,
+      baseColor: [0.965, 0.945, 0.902],
+      coat: 0.92,
+      coatAffectColor: 0.35,
+      coatAffectRoughness: 0.18,
+      coatColor: [0.973, 0.984, 1],
+      coatIor: 1.62,
+      coatRoughness: 0.06,
+      diffuseRoughness: 0.18,
+      sheen: 0.22,
+      sheenColor: [0.812, 0.847, 1],
+      sheenRoughness: 0.38,
+      specularColor: [0.969, 0.957, 1],
+      specularIor: 1.52,
+      specularRoughness: 0.18,
+      subsurface: 0.38,
+      subsurfaceColor: [1, 0.941, 0.847],
+      subsurfaceRadius: [1, 0.851, 0.749],
+      subsurfaceScale: 0.42,
+      thinFilmIor: 1.42,
+      thinFilmThickness: 520,
+      transmission: 0.08,
+      transmissionColor: [1, 0.973, 0.906],
+    },
+  },
+};
+const requestedMaterial = queryParams.get('material');
+let activeMaterialId = Object.hasOwn(materialSamples, requestedMaterial) ? requestedMaterial : 'standard';
+
+const shaderSource = `
+struct PrivateUniformsVertex {
+  u_worldMatrix: mat4x4<f32>,
+  u_viewProjectionMatrix: mat4x4<f32>,
+  u_worldInverseTransposeMatrix: mat4x4<f32>,
+};
+
+struct PrivateUniformsPixel {
+  u_envMatrix: mat4x4<f32>,
+  u_envLight: vec4<f32>,
+  u_viewPosition: vec4<f32>,
+  u_lightDirection: vec4<f32>,
+};
+
+struct PublicUniformsPixel {
+  ports: array<vec4<f32>, 39>,
+};
+
+struct LightDataPixel {
+  slots: array<vec4<f32>, 1>,
+};
+
+@group(0) @binding(0) var<uniform> u_vertex: PrivateUniformsVertex;
+@group(0) @binding(1) var<uniform> u_privatePixel: PrivateUniformsPixel;
+@group(0) @binding(2) var u_envRadianceTexture: texture_2d<f32>;
+@group(0) @binding(3) var u_envRadianceSampler: sampler;
+@group(0) @binding(4) var u_envIrradianceTexture: texture_2d<f32>;
+@group(0) @binding(5) var u_envIrradianceSampler: sampler;
+@group(0) @binding(6) var<uniform> u_public: PublicUniformsPixel;
+@group(0) @binding(7) var<uniform> u_lightData: LightDataPixel;
 
 struct VertexInput {
   @location(0) position: vec3<f32>,
@@ -44,11 +188,11 @@ struct VertexOutput {
 @vertex
 fn vertexMain(input: VertexInput) -> VertexOutput {
   var output: VertexOutput;
-  let worldPosition = uniforms.modelMatrix * vec4<f32>(input.position, 1.0);
-  output.clipPosition = uniforms.modelViewProjectionMatrix * vec4<f32>(input.position, 1.0);
+  let worldPosition = u_vertex.u_worldMatrix * vec4<f32>(input.position, 1.0);
+  output.clipPosition = u_vertex.u_viewProjectionMatrix * worldPosition;
   output.worldPosition = worldPosition.xyz;
-  output.normal = normalize((uniforms.normalMatrix * vec4<f32>(input.normal, 0.0)).xyz);
-  output.tangent = normalize((uniforms.normalMatrix * vec4<f32>(input.tangent, 0.0)).xyz);
+  output.normal = normalize((u_vertex.u_worldInverseTransposeMatrix * vec4<f32>(input.normal, 0.0)).xyz);
+  output.tangent = normalize((u_vertex.u_worldMatrix * vec4<f32>(input.tangent, 0.0)).xyz);
   return output;
 }
 
@@ -56,29 +200,105 @@ fn saturate(value: f32) -> f32 {
   return clamp(value, 0.0, 1.0);
 }
 
+fn materialFloat(index: u32) -> f32 {
+  return u_public.ports[index].x;
+}
+
+fn materialColor(index: u32) -> vec3<f32> {
+  return u_public.ports[index].xyz;
+}
+
+fn iorToF0(ior: f32) -> f32 {
+  let ratio = (ior - 1.0) / (ior + 1.0);
+  return ratio * ratio;
+}
+
+fn fresnelSchlick(cosTheta: f32, f0: vec3<f32>) -> vec3<f32> {
+  return f0 + (vec3<f32>(1.0) - f0) * pow(1.0 - saturate(cosTheta), 5.0);
+}
+
+fn specularLobe(nDotH: f32, roughness: f32) -> f32 {
+  let power = mix(192.0, 8.0, saturate(roughness));
+  return pow(saturate(nDotH), power) * mix(1.0, 0.22, saturate(roughness));
+}
+
+fn thinFilmTint(thickness: f32, coatWeight: f32) -> vec3<f32> {
+  let strength = saturate(thickness / 700.0) * saturate(coatWeight);
+  let phase = vec3<f32>(0.0, 2.0943951, 4.1887902) + thickness * 0.018;
+  let tint = vec3<f32>(0.64) + 0.36 * cos(phase);
+  return vec3<f32>(1.0) * (1.0 - strength) + tint * strength;
+}
+
 @fragment
 fn fragmentMain(input: VertexOutput) -> @location(0) vec4<f32> {
   let normal = normalize(input.normal);
   let tangent = normalize(input.tangent);
-  let viewDirection = normalize(uniforms.cameraPosition.xyz - input.worldPosition);
-  let lightDirection = normalize(-uniforms.lightDirection.xyz);
+  let viewDirection = normalize(u_privatePixel.u_viewPosition.xyz - input.worldPosition);
+  let lightDirection = normalize(-u_privatePixel.u_lightDirection.xyz);
   let halfVector = normalize(lightDirection + viewDirection);
-  let roughness = clamp(uniforms.material.x, 0.04, 1.0);
-  let metalness = saturate(uniforms.material.y);
-  let clearcoat = saturate(uniforms.material.z);
-  let baseColor = uniforms.baseColor.rgb;
+  let base = materialFloat(0u);
+  let baseColor = max(materialColor(1u) * base, vec3<f32>(0.0));
+  let diffuseRoughness = saturate(materialFloat(2u));
+  let metalness = saturate(materialFloat(3u));
+  let specular = saturate(materialFloat(4u));
+  let specularColor = max(materialColor(5u), vec3<f32>(0.0));
+  let specularRoughness = clamp(materialFloat(6u), 0.04, 1.0);
+  let specularIor = max(materialFloat(7u), 1.01);
+  let transmission = saturate(materialFloat(10u));
+  let transmissionColor = max(materialColor(11u), vec3<f32>(0.0));
+  let subsurface = saturate(materialFloat(17u));
+  let subsurfaceColor = max(materialColor(18u), vec3<f32>(0.0));
+  let sheen = saturate(materialFloat(22u));
+  let sheenColor = max(materialColor(23u), vec3<f32>(0.0));
+  let sheenRoughness = saturate(materialFloat(24u));
+  let coat = saturate(materialFloat(25u));
+  let coatColor = max(materialColor(26u), vec3<f32>(0.0));
+  let coatRoughness = clamp(materialFloat(27u), 0.03, 1.0);
+  let coatIor = max(materialFloat(30u), 1.01);
+  let coatAffectColor = saturate(materialFloat(31u));
+  let coatAffectRoughness = saturate(materialFloat(32u));
+  let thinFilmThickness = max(materialFloat(33u), 0.0);
+  let emission = max(materialFloat(35u), 0.0);
+  let emissionColor = max(materialColor(36u), vec3<f32>(0.0));
+  let opacity = saturate(dot(materialColor(37u), vec3<f32>(0.272229, 0.674082, 0.053689)));
+  let envIntensity = u_privatePixel.u_envLight.x;
+  let lightDataTouch = saturate(u_lightData.slots[0].x * 0.000001);
+  let activeLightCount = u_privatePixel.u_viewPosition.w + lightDataTouch;
   let nDotL = saturate(dot(normal, lightDirection));
   let nDotH = saturate(dot(normal, halfVector));
+  let nDotV = saturate(dot(normal, viewDirection));
   let vDotH = saturate(dot(viewDirection, halfVector));
   let tDotH = abs(dot(tangent, halfVector));
-  let diffuse = baseColor * (0.08 + nDotL * (1.0 - metalness));
-  let fresnel = pow(1.0 - vDotH, 5.0);
-  let specularPower = mix(160.0, 10.0, roughness);
-  let specular = pow(nDotH, specularPower) * mix(0.18, 0.72, 1.0 - roughness);
-  let tangentGlint = pow(tDotH, 32.0) * clearcoat * 0.08;
-  let specularColor = mix(vec3<f32>(0.9, 0.96, 1.0), baseColor, metalness);
-  let color = diffuse + specularColor * (specular + fresnel * 0.16 + tangentGlint);
-  let gammaCorrected = pow(color, vec3<f32>(1.0 / 2.2));
+  let irradiance = textureSample(u_envIrradianceTexture, u_envIrradianceSampler, vec2<f32>(0.5, 0.5)).rgb * envIntensity;
+  let radiance = textureSample(u_envRadianceTexture, u_envRadianceSampler, vec2<f32>(0.5, 0.5)).rgb * envIntensity;
+  let directMask = max(activeLightCount, 1.0);
+  let transmissionMix = transmission * 0.35;
+  let diffuseColor = baseColor * (1.0 - transmissionMix) + transmissionColor * transmissionMix;
+  let coatGamma = 1.0 + coat * coatAffectColor;
+  let coatAffectedDiffuse = pow(max(diffuseColor, vec3<f32>(0.0)), vec3<f32>(coatGamma));
+  let diffuseLight = vec3<f32>(0.12 + nDotL * mix(0.82, 0.58, diffuseRoughness) * directMask) + irradiance * 0.28;
+  let diffuse = coatAffectedDiffuse * diffuseLight * (1.0 - metalness);
+  let dielectricF0 = vec3<f32>(iorToF0(specularIor)) * specularColor * specular;
+  let f0 = dielectricF0 * (1.0 - metalness) + baseColor * metalness;
+  let specularFresnel = fresnelSchlick(vDotH, f0);
+  let specularTerm = specularLobe(nDotH, mix(specularRoughness, 1.0, coat * coatAffectRoughness));
+  let envSpecular = radiance * fresnelSchlick(nDotV, f0) * mix(0.35, 0.08, specularRoughness);
+  let coatF0 = vec3<f32>(iorToF0(coatIor)) * coatColor;
+  let film = thinFilmTint(thinFilmThickness, coat);
+  let coatTerm = coat * specularLobe(nDotH, coatRoughness) * fresnelSchlick(vDotH, coatF0) * film;
+  let sheenTerm = sheen * sheenColor * pow(1.0 - nDotV, mix(6.0, 1.4, sheenRoughness)) * 0.32;
+  let subsurfaceTerm = subsurface * subsurfaceColor * (0.1 + 0.42 * pow(1.0 - nDotV, 2.0));
+  let tangentGlint = vec3<f32>(pow(tDotH, 36.0)) * coat * film * 0.06;
+  let emissionTerm = emission * emissionColor;
+  let color = diffuse
+    + specularFresnel * specularTerm * (0.45 + nDotL * 1.6)
+    + envSpecular
+    + coatTerm * (0.8 + nDotL * 1.35)
+    + sheenTerm
+    + subsurfaceTerm
+    + tangentGlint
+    + emissionTerm;
+  let gammaCorrected = pow(max(color * opacity, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.2));
   return vec4<f32>(gammaCorrected, 1.0);
 }
 `;
@@ -263,6 +483,34 @@ function createBuffer(device, label, data, usage) {
   return buffer;
 }
 
+function createUniformBuffer(device, label, data) {
+  return device.createBuffer({
+    label,
+    size: data.byteLength,
+    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.UNIFORM,
+  });
+}
+
+function createPlaceholderTexture(device, label, color) {
+  const texture = device.createTexture({
+    format: 'rgba8unorm',
+    label,
+    size: [1, 1],
+    usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING,
+  });
+  device.queue.writeTexture(
+    { texture },
+    new Uint8Array(color.map(component => Math.round(saturateNumber(component) * 255))),
+    { bytesPerRow: 4, rowsPerImage: 1 },
+    { height: 1, width: 1 },
+  );
+  return texture;
+}
+
+function saturateNumber(value) {
+  return Math.min(1, Math.max(0, value));
+}
+
 async function createDevice() {
   if (!navigator.gpu) {
     throw new Error('WebGPU is not available in this browser.');
@@ -375,26 +623,76 @@ function getCameraPosition() {
   ];
 }
 
-function writeUniforms(uniformData, dimensions) {
+function writeFrameUniforms(privateVertexData, privatePixelData, dimensions) {
   const aspect = dimensions.width / dimensions.height;
   const projection = new Float32Array(16);
   const view = new Float32Array(16);
   const model = createIdentityMatrix();
   const normal = createIdentityMatrix();
-  const modelViewProjection = new Float32Array(16);
+  const viewProjection = new Float32Array(16);
   const cameraPosition = getCameraPosition();
 
   perspective(projection, cameraFov, aspect, cameraNear, cameraFar);
   lookAt(view, cameraPosition, [0, 0, 0], [0, 1, 0]);
-  multiplyMatrices(modelViewProjection, projection, view);
+  multiplyMatrices(viewProjection, projection, view);
 
-  uniformData.set(modelViewProjection, 0);
-  uniformData.set(model, 16);
-  uniformData.set(normal, 32);
-  uniformData.set([...cameraPosition, 1], 48);
-  uniformData.set([0.72, 0.78, 0.84, 1], 52);
-  uniformData.set([0.34, 0.0, 0.45, 0], 56);
-  uniformData.set([0.45, -0.8, -0.35, 0], 60);
+  privateVertexData.set(model, 0);
+  privateVertexData.set(viewProjection, 16);
+  privateVertexData.set(normal, 32);
+
+  privatePixelData.set([
+    -1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, -1, 0,
+    0, 0, 0, 1,
+  ], 0);
+  privatePixelData.set([1, 1, 16, 0], 16);
+  privatePixelData.set([...cameraPosition, 1], 20);
+  privatePixelData.set([0.45, -0.8, -0.35, 0], 24);
+}
+
+function writeMaterialUniforms(publicUniformData, materialId) {
+  const sample = materialSamples[materialId] || materialSamples.standard;
+  publicUniformData.fill(0);
+
+  for (const [name, value] of Object.entries(sample.ports)) {
+    const portIndex = materialPortIndex[name];
+    if (portIndex === undefined) continue;
+
+    const offset = portIndex * 4;
+    if (Array.isArray(value)) {
+      publicUniformData.set(value, offset);
+    } else if (typeof value === 'boolean') {
+      publicUniformData[offset] = value ? 1 : 0;
+    } else {
+      publicUniformData[offset] = value;
+    }
+  }
+
+  return sample;
+}
+
+function bindMaterialSelect(device, publicUniformBuffer, publicUniformData) {
+  const select = document.getElementById('material-sample');
+  if (!select) return;
+
+  select.innerHTML = Object.entries(materialSamples)
+    .map(([id, sample]) => `<option value="${id}">${sample.label}</option>`)
+    .join('');
+  select.value = activeMaterialId;
+
+  const applyMaterial = (materialId) => {
+    activeMaterialId = materialId;
+    const sample = writeMaterialUniforms(publicUniformData, activeMaterialId);
+    device.queue.writeBuffer(publicUniformBuffer, 0, publicUniformData);
+    setMetric('material', sample.label);
+    const nextUrl = new URL(document.location.href);
+    nextUrl.searchParams.set('material', activeMaterialId);
+    history.replaceState(null, '', nextUrl);
+  };
+
+  select.addEventListener('change', () => applyMaterial(select.value));
+  applyMaterial(activeMaterialId);
 }
 
 function createFpsMeter() {
@@ -450,17 +748,59 @@ async function main() {
   setMetric('mesh', `${geometry.indices.length / 3} triangles`);
   recordDuration('mesh', meshStart);
 
-  const uniformData = new Float32Array(uniformFloatCount);
-  const uniformBuffer = device.createBuffer({
-    label: 'Direct WebGPU proof uniforms',
-    size: uniformData.byteLength,
-    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.UNIFORM,
+  const privateVertexData = new Float32Array(privateVertexFloatCount);
+  const privatePixelData = new Float32Array(privatePixelFloatCount);
+  const publicUniformData = new Float32Array(publicUniformFloatCount);
+  const lightData = new Float32Array(lightDataFloatCount);
+  const privateVertexBuffer = createUniformBuffer(device, 'MaterialX PrivateUniforms vertex', privateVertexData);
+  const privatePixelBuffer = createUniformBuffer(device, 'MaterialX PrivateUniforms pixel', privatePixelData);
+  const publicUniformBuffer = createUniformBuffer(device, 'MaterialX PublicUniforms pixel port table', publicUniformData);
+  const lightDataBuffer = createUniformBuffer(device, 'MaterialX LightData pixel placeholder', lightData);
+  const envRadianceTexture = createPlaceholderTexture(device, 'MaterialX env radiance placeholder', [0.32, 0.36, 0.42, 1]);
+  const envIrradianceTexture = createPlaceholderTexture(device, 'MaterialX env irradiance placeholder', [0.62, 0.66, 0.68, 1]);
+  const envSampler = device.createSampler({
+    addressModeU: 'clamp-to-edge',
+    addressModeV: 'clamp-to-edge',
+    magFilter: 'linear',
+    minFilter: 'linear',
   });
+  device.queue.writeBuffer(lightDataBuffer, 0, lightData);
+  setMetric('contract', 'bindings 0-7');
+  bindMaterialSelect(device, publicUniformBuffer, publicUniformData);
+
   const bindGroup = device.createBindGroup({
     entries: [
       {
         binding: 0,
-        resource: { buffer: uniformBuffer },
+        resource: { buffer: privateVertexBuffer },
+      },
+      {
+        binding: 1,
+        resource: { buffer: privatePixelBuffer },
+      },
+      {
+        binding: 2,
+        resource: envRadianceTexture.createView(),
+      },
+      {
+        binding: 3,
+        resource: envSampler,
+      },
+      {
+        binding: 4,
+        resource: envIrradianceTexture.createView(),
+      },
+      {
+        binding: 5,
+        resource: envSampler,
+      },
+      {
+        binding: 6,
+        resource: { buffer: publicUniformBuffer },
+      },
+      {
+        binding: 7,
+        resource: { buffer: lightDataBuffer },
       },
     ],
     layout: pipeline.getBindGroupLayout(0),
@@ -476,8 +816,9 @@ async function main() {
   setStatus('Ready');
 
   function render(now) {
-    writeUniforms(uniformData, dimensions);
-    device.queue.writeBuffer(uniformBuffer, 0, uniformData);
+    writeFrameUniforms(privateVertexData, privatePixelData, dimensions);
+    device.queue.writeBuffer(privateVertexBuffer, 0, privateVertexData);
+    device.queue.writeBuffer(privatePixelBuffer, 0, privatePixelData);
 
     const encoder = device.createCommandEncoder();
     const pass = encoder.beginRenderPass({
