@@ -90,7 +90,7 @@ Use this as a periodic check, not as a blocker for the exploratory spike.
 | Phase | Goal | Stop Condition |
 | --- | --- | --- |
 | 1. Capture shader contract | Generate a simple material with ESSL and Wgsl outputs, list uniforms, textures, varyings, attributes, and resource bindings. | Done: initial contract captured for `standard` and `pearl`. |
-| 2. Build minimal WebGPU draw | Render a static mesh with a hand-authored WGSL shader and the same camera framing as the lab. | Done: initial `/webgpu-direct.html` proof draw added. |
+| 2. Build minimal WebGPU draw | Render a static mesh with a hand-authored WGSL shader and the same camera framing as the lab. | Done: `/webgpu-direct.html` proof draw added, now loading the MaterialX shaderball GLB with a generated sphere fallback. |
 | 3. Adapt one MaterialX sample | Translate the smallest representative generated shader into browser WGSL and bind the required uniforms/textures. | In progress: `/webgpu-direct.html` now binds the MaterialX-style WebGPU resource slots and shades from the generated public-uniform contract; full generated-shader translation remains open. |
 | 4. Add one complex sample | Try a more realistic material such as pearl after the simple case works. | Stop if the second material needs many special cases. |
 | 5. Measure against WebGL | Compare compile/setup time, steady FPS, frame stability, and interaction latency against the existing WebGL path. | Stop if performance is similar and implementation complexity is materially higher. |
@@ -264,7 +264,7 @@ The Phase 2 proof draw now covers:
 
 - Request adapter/device.
 - Configure a canvas.
-- Upload one generated sphere mesh.
+- Load and upload the MaterialX shaderball GLB, with a generated sphere fallback if model loading fails.
 - Bind camera/model uniforms.
 - Render with position, normal, and tangent attributes.
 - Use the same camera FOV, near plane, far plane, and approximate fit distance as the lab.
@@ -281,6 +281,8 @@ The direct WebGPU proof now has a MaterialX-shaped binding harness:
 - `binding=4` and `binding=5`: placeholder environment irradiance texture and sampler.
 - `binding=6`: public standard-surface material values in the same 39-port order reported by the MaterialX generator.
 - `binding=7`: placeholder light data block.
+
+The proof draw now uses the vendored MaterialX `shaderball.glb` by default. The loader applies mesh transforms, normalizes the model into the direct renderer's view volume, and packs position, normal, and tangent data into the same WebGPU vertex layout used by the generated sphere fallback. A custom geometry URL can be supplied with `geom=...` for local experiments.
 
 This is not yet a direct translation of the generated `wgsl-complete.pixel.glsl` output. Instead, it is a browser-WGSL bridge that keeps the generated binding numbers and public-uniform semantic order while using a compact hand-authored standard-surface approximation. That gives the spike a real WebGPU resource contract to measure before investing in a broader shader translator.
 

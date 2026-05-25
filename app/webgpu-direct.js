@@ -1,11 +1,14 @@
 // This import+export makes sure webgpu-direct.html is copied to dist and the
 // import is not stripped out during bundling.
 import index from './webgpu-direct.html';
+import { Box3, Vector3 } from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 export function getFilePaths() {
   return { index };
 }
 
+const defaultGeometry = 'vendor/MaterialX/resources/Geometry/shaderball.glb';
 const appStartTime = performance.now();
 const cameraFov = 60 * Math.PI / 180;
 const cameraNear = 0.05;
@@ -485,6 +488,144 @@ function createSphereGeometry(radius = sphereRadius, widthSegments = 96, heightS
   };
 }
 
+function getAttributeVector3(attribute, index, fallback = [0, 0, 0]) {
+  if (!attribute) return fallback;
+
+  return [
+    attribute.getX(index),
+    attribute.getY(index),
+    attribute.getZ(index),
+  ];
+}
+
+function getFallbackTangent(normal) {
+  const helper = Math.abs(normal[1]) < 0.92 ? [0, 1, 0] : [1, 0, 0];
+  return normalize(cross(helper, normal));
+}
+
+function collectMeshGeometries(root) {
+  const geometries = [];
+  root.updateWorldMatrix(true, true);
+
+  root.traverse((child) => {
+    if (!child.isMesh || !child.geometry?.attributes?.position) return;
+
+    const geometry = child.geometry.clone();
+    geometry.applyMatrix4(child.matrixWorld);
+
+    if (!geometry.attributes.normal) {
+      geometry.computeVertexNormals();
+    }
+
+    if (!geometry.attributes.tangent && geometry.index && geometry.attributes.uv) {
+      geometry.computeTangents();
+    }
+
+    geometries.push({
+      geometry,
+      name: child.name || 'mesh',
+    });
+  });
+
+  return geometries;
+}
+
+function packGeometries(geometries, label) {
+  if (!geometries.length) {
+    throw new Error(`No renderable meshes found in ${label}.`);
+  }
+
+  const bounds = new Box3();
+  for (const { geometry } of geometries) {
+    geometry.computeBoundingBox();
+    bounds.union(geometry.boundingBox);
+  }
+
+  const center = new Vector3();
+  const size = new Vector3();
+  bounds.getCenter(center);
+  bounds.getSize(size);
+  const maxSize = Math.max(size.x, size.y, size.z) || 1;
+  const scale = (sphereRadius * 2) / maxSize;
+  const vertices = [];
+  const indices = [];
+
+  for (const { geometry } of geometries) {
+    const position = geometry.attributes.position;
+    const normal = geometry.attributes.normal;
+    const tangent = geometry.attributes.tangent;
+    const index = geometry.index;
+    const vertexOffset = vertices.length / 9;
+
+    for (let vertexIndex = 0; vertexIndex < position.count; vertexIndex++) {
+      const rawPosition = getAttributeVector3(position, vertexIndex);
+      const rawNormal = normalize(getAttributeVector3(normal, vertexIndex, [0, 1, 0]));
+      const rawTangent = tangent
+        ? normalize(getAttributeVector3(tangent, vertexIndex, getFallbackTangent(rawNormal)))
+        : getFallbackTangent(rawNormal);
+
+      vertices.push(
+        (rawPosition[0] - center.x) * scale,
+        (rawPosition[1] - center.y) * scale,
+        (rawPosition[2] - center.z) * scale,
+        rawNormal[0],
+        rawNormal[1],
+        rawNormal[2],
+        rawTangent[0],
+        rawTangent[1],
+        rawTangent[2],
+      );
+    }
+
+    if (index) {
+      for (let indexIndex = 0; indexIndex < index.count; indexIndex++) {
+        indices.push(vertexOffset + index.getX(indexIndex));
+      }
+    } else {
+      for (let vertexIndex = 0; vertexIndex < position.count; vertexIndex++) {
+        indices.push(vertexOffset + vertexIndex);
+      }
+    }
+  }
+
+  return {
+    indices: new Uint32Array(indices),
+    label,
+    vertices: new Float32Array(vertices),
+  };
+}
+
+async function loadShaderballGeometry() {
+  const geometryUrl = queryParams.get('geom') || defaultGeometry;
+  const loader = new GLTFLoader();
+  const gltf = await loader.loadAsync(geometryUrl);
+  const geometries = collectMeshGeometries(gltf.scene);
+  return packGeometries(geometries, prettyGeometryName(geometryUrl));
+}
+
+async function loadGeometry() {
+  try {
+    setStatus('Loading shaderball');
+    return await loadShaderballGeometry();
+  } catch (error) {
+    console.warn('Could not load shaderball geometry, using generated sphere fallback.', error);
+    setMetric('model', 'Generated sphere');
+    return {
+      ...createSphereGeometry(),
+      label: 'Generated sphere',
+    };
+  }
+}
+
+function prettyGeometryName(path) {
+  return decodeURIComponent(path)
+    .split('/')
+    .pop()
+    .replace(/\.[^.]+$/, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, character => character.toUpperCase());
+}
+
 function createBuffer(device, label, data, usage) {
   const buffer = device.createBuffer({
     label,
@@ -807,11 +948,12 @@ async function main() {
   const pipeline = createPipeline(device, format);
 
   const meshStart = performance.now();
-  const geometry = createSphereGeometry();
+  const geometry = await loadGeometry();
   const vertexBuffer = createBuffer(device, 'Shaderball vertices', geometry.vertices, GPUBufferUsage.VERTEX);
   const indexBuffer = createBuffer(device, 'Shaderball indices', geometry.indices, GPUBufferUsage.INDEX);
+  setMetric('model', geometry.label);
+  recordDuration('modelLoad', meshStart);
   setMetric('mesh', `${geometry.indices.length / 3} triangles`);
-  recordDuration('mesh', meshStart);
 
   const privateVertexData = new Float32Array(privateVertexFloatCount);
   const privatePixelData = new Float32Array(privatePixelFloatCount);
