@@ -18,6 +18,38 @@ const queryParams = new URLSearchParams(document.location.search);
 const forceWebGL = queryParams.get('renderer') === 'webgl' || queryParams.get('forceWebGL') === '1';
 const appStartTime = performance.now();
 
+const materialDefaults = {
+  baseColor: '#b7c7d7',
+  clearcoat: 0.45,
+  coatAffectColor: 0,
+  coatAffectRoughness: 0,
+  coatAnisotropy: 0,
+  coatColor: '#ffffff',
+  coatIor: 1.5,
+  coatRotation: 0,
+  coatRoughness: null,
+  emission: 0,
+  emissionColor: '#ffffff',
+  metalness: 0,
+  roughness: 0.34,
+  sheen: 0,
+  sheenColor: '#ffffff',
+  sheenRoughness: 0.3,
+  specular: 1,
+  specularAnisotropy: 0,
+  specularColor: '#ffffff',
+  specularIor: 1.5,
+  subsurface: 0,
+  subsurfaceAnisotropy: 0,
+  subsurfaceColor: '#ffffff',
+  subsurfaceRadius: '#ffffff',
+  subsurfaceScale: 1,
+  thinFilmIor: 1.5,
+  thinFilmThickness: 0,
+  transmission: 0,
+  transmissionColor: '#ffffff',
+};
+
 const materialPresets = {
   coatedPlastic: {
     label: 'Coated Plastic',
@@ -49,6 +81,32 @@ const materialPresets = {
       transmission: 0,
     },
   },
+  pearl: {
+    label: 'Pearl',
+    values: {
+      baseColor: '#f6f1e6',
+      clearcoat: 0.92,
+      coatAffectColor: 0.35,
+      coatAffectRoughness: 0.18,
+      coatColor: '#f8fbff',
+      coatIor: 1.62,
+      coatRoughness: 0.06,
+      roughness: 0.18,
+      sheen: 0.22,
+      sheenColor: '#cfd8ff',
+      sheenRoughness: 0.38,
+      specularColor: '#f7f4ff',
+      specularIor: 1.52,
+      subsurface: 0.38,
+      subsurfaceColor: '#fff0d8',
+      subsurfaceRadius: '#ffd9bf',
+      subsurfaceScale: 0.42,
+      thinFilmIor: 1.42,
+      thinFilmThickness: 520,
+      transmission: 0.08,
+      transmissionColor: '#fff8e7',
+    },
+  },
   softRubber: {
     label: 'Soft Rubber',
     values: {
@@ -70,8 +128,9 @@ const materialPresets = {
     },
   },
 };
-const defaultMaterialPreset = 'coatedPlastic';
-const materialState = { ...materialPresets[defaultMaterialPreset].values };
+const requestedMaterialPreset = queryParams.get('material');
+const defaultMaterialPreset = Object.hasOwn(materialPresets, requestedMaterialPreset) ? requestedMaterialPreset : 'coatedPlastic';
+const materialState = getMaterialPresetValues(defaultMaterialPreset);
 const materialControlIds = [
   'roughness',
   'metalness',
@@ -129,6 +188,13 @@ function formatMaterialFloat(value) {
   return Number(value).toFixed(3);
 }
 
+function getMaterialPresetValues(presetId) {
+  return {
+    ...materialDefaults,
+    ...(materialPresets[presetId]?.values || {}),
+  };
+}
+
 function hexToRgbFloats(hex) {
   const normalized = hex.replace(/^#/, '');
   const value = Number.parseInt(normalized, 16);
@@ -137,6 +203,10 @@ function hexToRgbFloats(hex) {
     ((value >> 8) & 255) / 255,
     (value & 255) / 255,
   ];
+}
+
+function formatMaterialColor(value) {
+  return hexToRgbFloats(value).map(formatMaterialFloat).join(', ');
 }
 
 function getMaterialPresetName() {
@@ -152,12 +222,35 @@ function getMaterialNodeSuffix() {
 }
 
 function createMaterialXSource() {
-  const [r, g, b] = hexToRgbFloats(materialState.baseColor).map(formatMaterialFloat);
+  const baseColor = formatMaterialColor(materialState.baseColor);
+  const coatColor = formatMaterialColor(materialState.coatColor);
+  const emissionColor = formatMaterialColor(materialState.emissionColor);
   const roughness = formatMaterialFloat(materialState.roughness);
   const metalness = formatMaterialFloat(materialState.metalness);
   const clearcoat = formatMaterialFloat(materialState.clearcoat);
+  const coatAffectColor = formatMaterialFloat(materialState.coatAffectColor);
+  const coatAffectRoughness = formatMaterialFloat(materialState.coatAffectRoughness);
+  const coatAnisotropy = formatMaterialFloat(materialState.coatAnisotropy);
+  const coatIor = formatMaterialFloat(materialState.coatIor);
+  const coatRotation = formatMaterialFloat(materialState.coatRotation);
   const transmission = formatMaterialFloat(materialState.transmission);
-  const coatRoughness = formatMaterialFloat(Math.max(0.04, materialState.roughness * 0.65));
+  const transmissionColor = formatMaterialColor(materialState.transmissionColor);
+  const coatRoughness = formatMaterialFloat(materialState.coatRoughness ?? Math.max(0.04, materialState.roughness * 0.65));
+  const emission = formatMaterialFloat(materialState.emission);
+  const sheen = formatMaterialFloat(materialState.sheen);
+  const sheenColor = formatMaterialColor(materialState.sheenColor);
+  const sheenRoughness = formatMaterialFloat(materialState.sheenRoughness);
+  const specular = formatMaterialFloat(materialState.specular);
+  const specularAnisotropy = formatMaterialFloat(materialState.specularAnisotropy);
+  const specularColor = formatMaterialColor(materialState.specularColor);
+  const specularIor = formatMaterialFloat(materialState.specularIor);
+  const subsurface = formatMaterialFloat(materialState.subsurface);
+  const subsurfaceAnisotropy = formatMaterialFloat(materialState.subsurfaceAnisotropy);
+  const subsurfaceColor = formatMaterialColor(materialState.subsurfaceColor);
+  const subsurfaceRadius = formatMaterialColor(materialState.subsurfaceRadius);
+  const subsurfaceScale = formatMaterialFloat(materialState.subsurfaceScale);
+  const thinFilmIor = formatMaterialFloat(materialState.thinFilmIor);
+  const thinFilmThickness = formatMaterialFloat(materialState.thinFilmThickness);
   const nodeSuffix = getMaterialNodeSuffix();
 
   return `<?xml version="1.0"?>
@@ -165,19 +258,37 @@ function createMaterialXSource() {
   <!-- Preset: ${getMaterialPresetLabel()} -->
   <standard_surface name="SR_${nodeSuffix}" type="surfaceshader">
     <input name="base" type="float" value="1.0" />
-    <input name="base_color" type="color3" value="${r}, ${g}, ${b}" />
+    <input name="base_color" type="color3" value="${baseColor}" />
     <input name="diffuse_roughness" type="float" value="${roughness}" />
-    <input name="specular" type="float" value="1" />
-    <input name="specular_color" type="color3" value="1, 1, 1" />
+    <input name="specular" type="float" value="${specular}" />
+    <input name="specular_color" type="color3" value="${specularColor}" />
     <input name="specular_roughness" type="float" value="${roughness}" />
-    <input name="specular_IOR" type="float" value="1.5" />
+    <input name="specular_IOR" type="float" value="${specularIor}" />
+    <input name="specular_anisotropy" type="float" value="${specularAnisotropy}" />
     <input name="metalness" type="float" value="${metalness}" />
     <input name="transmission" type="float" value="${transmission}" />
+    <input name="transmission_color" type="color3" value="${transmissionColor}" />
+    <input name="subsurface" type="float" value="${subsurface}" />
+    <input name="subsurface_color" type="color3" value="${subsurfaceColor}" />
+    <input name="subsurface_radius" type="color3" value="${subsurfaceRadius}" />
+    <input name="subsurface_scale" type="float" value="${subsurfaceScale}" />
+    <input name="subsurface_anisotropy" type="float" value="${subsurfaceAnisotropy}" />
+    <input name="sheen" type="float" value="${sheen}" />
+    <input name="sheen_color" type="color3" value="${sheenColor}" />
+    <input name="sheen_roughness" type="float" value="${sheenRoughness}" />
     <input name="coat" type="float" value="${clearcoat}" />
+    <input name="coat_color" type="color3" value="${coatColor}" />
     <input name="coat_roughness" type="float" value="${coatRoughness}" />
-    <input name="subsurface" type="float" value="0" />
+    <input name="coat_anisotropy" type="float" value="${coatAnisotropy}" />
+    <input name="coat_rotation" type="float" value="${coatRotation}" />
+    <input name="coat_IOR" type="float" value="${coatIor}" />
+    <input name="coat_affect_color" type="float" value="${coatAffectColor}" />
+    <input name="coat_affect_roughness" type="float" value="${coatAffectRoughness}" />
+    <input name="thin_film_thickness" type="float" value="${thinFilmThickness}" />
+    <input name="thin_film_IOR" type="float" value="${thinFilmIor}" />
     <input name="thin_walled" type="boolean" value="false" />
-    <input name="emission" type="float" value="0" />
+    <input name="emission" type="float" value="${emission}" />
+    <input name="emission_color" type="color3" value="${emissionColor}" />
     <input name="opacity" type="color3" value="1, 1, 1" />
   </standard_surface>
   <surfacematerial name="MAT_${nodeSuffix}" type="material">
@@ -191,10 +302,31 @@ function applyMaterialState(material) {
   material.roughness = materialState.roughness;
   material.metalness = materialState.metalness;
   material.clearcoat = materialState.clearcoat;
-  material.clearcoatRoughness = Math.max(0.04, materialState.roughness * 0.65);
+  material.clearcoatRoughness = materialState.coatRoughness ?? Math.max(0.04, materialState.roughness * 0.65);
+  material.ior = materialState.specularIor;
   material.transmission = materialState.transmission;
+  material.thickness = materialState.transmission > 0 ? 0.18 : 0.08;
   material.opacity = materialState.transmission > 0 ? Math.max(0.28, 1 - materialState.transmission * 0.48) : 1;
   material.transparent = materialState.transmission > 0;
+
+  if ('iridescence' in material) {
+    material.iridescence = materialState.thinFilmThickness > 0 ? Math.min(1, materialState.clearcoat + materialState.sheen) : 0;
+    material.iridescenceIOR = materialState.thinFilmIor;
+    material.iridescenceThicknessRange = materialState.thinFilmThickness > 0
+      ? [Math.max(0, materialState.thinFilmThickness - 120), materialState.thinFilmThickness + 120]
+      : [100, 400];
+  }
+
+  if ('sheen' in material) {
+    material.sheen = materialState.sheen;
+    material.sheenRoughness = materialState.sheenRoughness;
+    material.sheenColor.set(materialState.sheenColor);
+  }
+
+  if ('attenuationColor' in material) {
+    material.attenuationColor.set(materialState.transmissionColor);
+  }
+
   material.needsUpdate = true;
 }
 
@@ -224,7 +356,7 @@ function applyPreset(presetId, material) {
   if (!preset) return;
 
   state.activePreset = presetId;
-  Object.assign(materialState, preset.values);
+  Object.assign(materialState, getMaterialPresetValues(presetId));
   syncMaterialControls();
   applyMaterialState(material);
   scheduleShaderRegeneration();
