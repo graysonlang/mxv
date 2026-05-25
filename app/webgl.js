@@ -1,6 +1,6 @@
-// This import+export makes sure index.html is copied to dist and the import
+// This import+export makes sure webgl.html is copied to dist and the import
 // is not stripped out during bundling.
-import index from './index.html';
+import index from './webgl.html';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { Viewer } from './materialx-viewer/viewer.js';

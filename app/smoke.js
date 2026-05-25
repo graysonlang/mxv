@@ -1,4 +1,4 @@
-// This import+export makes sure index.html is copied to dist and the import
+// This import+export makes sure smoke.html is copied to dist and the import
 // is not stripped out during bundling.
 import index from './smoke.html';
 import { loadAssetManifest } from '../src/index.js';

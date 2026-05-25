@@ -19,7 +19,8 @@ Generated Emscripten output lives in the sibling `../mx` runtime package. The vi
 
 ## Implementation Cautions
 
-- `app/main.js` is the main viewer.
+- `app/index.js` is the hash-fragment renderer shell.
+- `app/webgl.js` is the main WebGL viewer.
 - `app/smoke.js` is a smaller shader-generation smoke/debug entry point.
 - `app/materialx-viewer/viewer.js` is copied upstream viewer code with local patches.
 - The runtime build now lives in the sibling `../mx` package. If future MaterialX versions add required binding/source files, update the Makefile there and publish or link a refreshed `@graysonlang/mx` package.

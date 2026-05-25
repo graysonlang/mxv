@@ -16,10 +16,24 @@ Check that it is responding:
 curl -I http://127.0.0.1:8080/
 ```
 
-The main viewer is served at:
+The renderer shell is served at:
 
 ```text
 http://127.0.0.1:8080/
+```
+
+Explicit renderer modes are available through URI fragments:
+
+```text
+http://127.0.0.1:8080/#webgl
+http://127.0.0.1:8080/#webgpu
+http://127.0.0.1:8080/#direct
+```
+
+The WebGL viewer is also served directly at:
+
+```text
+http://127.0.0.1:8080/webgl.html
 ```
 
 The smaller shader-generation smoke test is served at:
@@ -55,7 +69,7 @@ Plain headless Chrome on macOS may fail with `Error creating WebGL context.` Use
   --window-size=1280,720 \
   --virtual-time-budget=15000 \
   --screenshot=/private/tmp/mxv-webgl-check.png \
-  'http://127.0.0.1:8080/?specular=none&quality=performance&antialias=on'
+  'http://127.0.0.1:8080/webgl.html?specular=none&quality=performance&antialias=on'
 ```
 
 The useful signal is the screenshot itself, not Chrome's stderr. Chrome may print updater, GPU stall, or allocator warnings during a successful capture.
@@ -64,28 +78,34 @@ If a headless Chrome process remains attached after writing the screenshot, stop
 
 ## Good URLs To Check
 
-Default viewer:
+Renderer shell:
 
 ```text
 http://127.0.0.1:8080/
 ```
 
+Default WebGL viewer:
+
+```text
+http://127.0.0.1:8080/webgl.html
+```
+
 No specular radiance path:
 
 ```text
-http://127.0.0.1:8080/?specular=none&quality=performance&antialias=on
+http://127.0.0.1:8080/webgl.html?specular=none&quality=performance&antialias=on
 ```
 
 Prefiltered environment path:
 
 ```text
-http://127.0.0.1:8080/?specular=prefilter&quality=performance&antialias=on
+http://127.0.0.1:8080/webgl.html?specular=prefilter&quality=performance&antialias=on
 ```
 
 Alternate environment map:
 
 ```text
-http://127.0.0.1:8080/?environment=Table+Mountain+Split&specular=prefilter
+http://127.0.0.1:8080/webgl.html?environment=Table+Mountain+Split&specular=prefilter
 ```
 
 Smoke test:
@@ -98,6 +118,12 @@ WebGPU material lab:
 
 ```text
 http://127.0.0.1:8080/webgpu.html
+```
+
+Direct WebGPU proof draw:
+
+```text
+http://127.0.0.1:8080/webgpu-direct.html
 ```
 
 WebGPU material lab with Three's WebGL2 fallback backend forced:

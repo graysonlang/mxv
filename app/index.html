@@ -13,203 +13,103 @@
 
     body {
       background: #101312;
-      color: #ebe7dc;
+      color: #efede7;
       margin: 0;
       overflow: hidden;
     }
 
     #container {
+      display: grid;
+      grid-template-rows: 42px minmax(0, 1fr);
       min-height: 100vh;
-      position: relative;
     }
 
-    #webglcanvas {
-      display: block;
-      height: 100vh;
-      outline: none;
-      width: 100vw;
-    }
-
-    .hud {
-      display: grid;
-      gap: 8px;
-      left: 12px;
-      max-width: min(520px, calc(100vw - 24px));
-      position: fixed;
-      top: 12px;
-      z-index: 5;
-    }
-
-    .select-row {
+    .mode-bar {
       align-items: center;
-      background: rgba(13, 17, 16, 0.78);
-      border: 1px solid rgba(183, 205, 193, 0.18);
+      background: #0f1513;
+      border-bottom: 1px solid rgba(183, 205, 193, 0.18);
       box-sizing: border-box;
-      display: grid;
+      display: flex;
       gap: 8px;
-      grid-template-columns: 76px minmax(0, 1fr);
-      min-height: 34px;
+      min-width: 0;
+      overflow-x: auto;
       padding: 6px 8px;
     }
 
-    .bottom-hud {
-      align-items: flex-end;
-      bottom: 12px;
-      display: flex;
-      gap: 8px;
-      left: 12px;
-      max-width: calc(100vw - 24px);
-      pointer-events: none;
-      position: fixed;
-      z-index: 6;
-    }
-
-    .status {
-      align-items: center;
-      background: rgba(13, 17, 16, 0.72);
-      border: 1px solid rgba(183, 205, 193, 0.16);
-      box-sizing: border-box;
-      display: flex;
-      gap: 10px;
-      min-height: 28px;
-      min-width: 0;
-      padding: 6px 9px;
-    }
-
-    label,
-    .status-label {
-      color: #a5b1ab;
-      font-size: 12px;
-      font-weight: 700;
-      letter-spacing: 0;
-      text-transform: uppercase;
-    }
-
-    select {
-      appearance: none;
-      background: #0f1513;
-      border: 1px solid #3d4944;
-      border-radius: 6px;
+    .brand {
       color: #f0eee7;
-      font: 13px/1.2 ui-sans-serif, system-ui, sans-serif;
+      flex: 0 0 auto;
+      font: 700 13px/1 ui-sans-serif, system-ui, sans-serif;
+      margin-right: 4px;
+      text-decoration: none;
+    }
+
+    .mode-link {
+      align-items: center;
+      background: #111715;
+      border: 1px solid #43504b;
+      border-radius: 6px;
+      box-sizing: border-box;
+      color: #e5e0d5;
+      display: inline-flex;
+      flex: 0 0 auto;
+      font: 700 12px/1 ui-sans-serif, system-ui, sans-serif;
+      justify-content: center;
       min-height: 30px;
-      min-width: 0;
+      min-width: 82px;
       padding: 0 10px;
+      text-decoration: none;
+    }
+
+    .mode-link.is-active {
+      background: #79d0d0;
+      border-color: #79d0d0;
+      color: #071716;
+    }
+
+    .open-link {
+      color: #c3d0ca;
+      flex: 0 0 auto;
+      font: 12px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      margin-left: auto;
+      text-decoration: none;
+    }
+
+    .open-link:hover {
+      color: #ffffff;
+    }
+
+    iframe {
+      background: #101312;
+      border: 0;
+      display: block;
+      height: 100%;
       width: 100%;
     }
 
-    option {
-      background: #101312;
-      color: #f0eee7;
-    }
-
-    .status-value {
-      font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      min-width: 0;
-      overflow: hidden;
-      overflow-wrap: anywhere;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .fps-overlay {
-      background: rgba(13, 17, 16, 0.72);
-      border: 1px solid rgba(183, 205, 193, 0.16);
-      color: #f0eee7;
-      flex: 0 0 auto;
-      font: 12px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      min-height: 28px;
-      padding: 6px 9px;
-    }
-
-    .lil-gui {
-      top: 12px !important;
-    }
-
-    .peditoritem {
-      background-color: #334444;
-    }
-
-    .peditorfolder {
-      background-color: #333333;
-    }
-
-    .peditor_material_assigned {
-      background-color: #006cb8;
-    }
-
-    .peditor_material_assigned:hover {
-      background-color: #32adff;
-    }
-
-    @media (max-width: 740px) {
-      .hud {
-        right: 12px;
+    @media (max-width: 640px) {
+      #container {
+        grid-template-rows: 40px minmax(0, 1fr);
       }
 
-      .select-row {
-        grid-template-columns: 1fr;
-      }
-
-      .bottom-hud {
-        align-items: stretch;
-        flex-direction: column;
-      }
-
-      .status-value {
-        white-space: normal;
+      .brand,
+      .open-link {
+        display: none;
       }
     }
   </style>
-  <script src="./main.js" type="module"></script>
+  <script src="./index.js" type="module"></script>
 </head>
 <body>
   <div id="container">
-    <div class="hud">
-      <div class="select-row">
-        <label for="materials">Material</label>
-        <select id="materials" name="materials"></select>
-      </div>
-      <div class="select-row">
-        <label for="geometry">Geometry</label>
-        <select id="geometry" name="geometry"></select>
-      </div>
-      <div class="select-row">
-        <label for="environment">Env Map</label>
-        <select id="environment" name="environment"></select>
-      </div>
-      <div class="select-row">
-        <label for="quality">Quality</label>
-        <select id="quality" name="quality"></select>
-      </div>
-      <div class="select-row">
-        <label for="antialias">Antialias</label>
-        <select id="antialias" name="antialias"></select>
-      </div>
-      <div class="select-row">
-        <label for="shader-specular">Specular</label>
-        <select id="shader-specular" name="shader-specular"></select>
-      </div>
-      <div class="select-row">
-        <label for="shader-albedo">Albedo</label>
-        <select id="shader-albedo" name="shader-albedo"></select>
-      </div>
-      <div class="select-row">
-        <label for="shader-interface">Interface</label>
-        <select id="shader-interface" name="shader-interface"></select>
-      </div>
-      <div class="select-row">
-        <label for="shader-srgb">sRGB</label>
-        <select id="shader-srgb" name="shader-srgb"></select>
-      </div>
-    </div>
-    <div class="bottom-hud">
-      <div class="status">
-        <span class="status-label">Status</span>
-        <span class="status-value" data-status>Loading viewer</span>
-      </div>
-    </div>
-    <canvas id="webglcanvas" tabindex="1"></canvas>
+    <nav class="mode-bar" aria-label="Renderer mode">
+      <a class="brand" href="#webgl" aria-label="mxv">mxv</a>
+      <a class="mode-link" href="#webgl" data-mode-link="webgl">WebGL</a>
+      <a class="mode-link" href="#webgpu" data-mode-link="webgpu">WebGPU</a>
+      <a class="mode-link" href="#direct" data-mode-link="direct">Direct</a>
+      <a class="open-link" href="./webgl.html" target="_blank" rel="noreferrer" data-open-current>Open mode</a>
+    </nav>
+    <iframe title="mxv renderer mode" data-mode-frame src="./webgl.html"></iframe>
   </div>
 </body>
 </html>

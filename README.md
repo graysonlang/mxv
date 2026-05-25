@@ -6,7 +6,8 @@ The current app can load MaterialX example materials and geometry from the vendo
 
 ## Project Shape
 
-- `app/main.js` is the main model/material viewer.
+- `app/index.js` is the hash-fragment renderer shell for `/`.
+- `app/webgl.js` is the main WebGL MaterialX model/material viewer.
 - `app/smoke.js` is a smaller shader-generation smoke test kept for debugging the MaterialX runtime.
 - `app/webgpu.js` is an experimental WebGPU material lab entry point.
 - `app/webgpu-direct.js` is a minimal direct-WebGPU proof draw for the MaterialX shader spike.
@@ -134,25 +135,34 @@ Then open:
 http://127.0.0.1:8080/
 ```
 
+The renderer shell uses fragments for mode selection:
+
+```text
+http://127.0.0.1:8080/#webgl
+http://127.0.0.1:8080/#webgpu
+http://127.0.0.1:8080/#direct
+```
+
 The smoke test entry is also built and can be opened at:
 
 ```text
 http://127.0.0.1:8080/smoke.html
 ```
 
-The WebGPU labs are available at:
+The renderer pages are also available directly:
 
 ```text
+http://127.0.0.1:8080/webgl.html
 http://127.0.0.1:8080/webgpu.html
 http://127.0.0.1:8080/webgpu-direct.html
 ```
 
-## Viewer Options
+## WebGL Viewer Options
 
-The viewer persists common settings in the URL. Friendly names are used for material and model selection:
+The WebGL viewer persists common settings in the URL. Friendly names are used for material and model selection:
 
 ```text
-http://127.0.0.1:8080/?material=Standard+Surface+Default&model=Shaderball
+http://127.0.0.1:8080/webgl.html?material=Standard+Surface+Default&model=Shaderball
 ```
 
 Supported query params:

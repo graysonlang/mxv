@@ -7,9 +7,9 @@ function getOptions(args, verbose, logger) {
     assetNames: '[name]',
     bundle: true,
     entryPoints: {
-      'index': 'src/index.js',
-      'main': 'app/main.js',
+      'index': 'app/index.js',
       'smoke': 'app/smoke.js',
+      'webgl': 'app/webgl.js',
       'webgpu-direct': 'app/webgpu-direct.js',
       'webgpu': 'app/webgpu.js',
     },
