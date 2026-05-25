@@ -284,7 +284,7 @@ The direct WebGPU proof now has a MaterialX-shaped binding harness:
 
 The proof draw now uses the vendored MaterialX `shaderball.glb` by default. The loader applies mesh transforms, normalizes the model into the direct renderer's view volume, and packs position, normal, and tangent data into the same WebGPU vertex layout used by the generated sphere fallback. A custom geometry URL can be supplied with `geom=...` for local experiments.
 
-The direct pipeline includes a `depth24plus` depth attachment and disables triangle culling for parity with the current WebGL MaterialX viewer, which creates generated shader materials with `DoubleSide`. This avoids making the spike sensitive to asset winding while preserving proper front-to-back surface visibility on the shaderball.
+The direct pipeline includes a `depth24plus` depth attachment and uses single-sided rasterization with `frontFace: "ccw"` and `cullMode: "back"`. The shaderball GLB and generated sphere fallback now both use winding that matches their outward normals, which gives this spike an efficient WebGPU-style draw path while still catching future asset or transform mistakes.
 
 This is not yet a direct translation of the generated `wgsl-complete.pixel.glsl` output. Instead, it is a browser-WGSL bridge that keeps the generated binding numbers and public-uniform semantic order while using a compact hand-authored standard-surface approximation. That gives the spike a real WebGPU resource contract to measure before investing in a broader shader translator.
 

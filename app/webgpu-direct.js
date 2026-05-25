@@ -735,7 +735,8 @@ function createPipeline(device, format) {
     label: 'Direct WebGPU proof pipeline',
     layout: 'auto',
     primitive: {
-      cullMode: 'none',
+      cullMode: 'back',
+      frontFace: 'ccw',
       topology: 'triangle-list',
     },
     vertex: {
