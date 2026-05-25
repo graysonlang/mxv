@@ -16,6 +16,7 @@ const cameraFar = 100;
 const sphereRadius = 0.8;
 const initialDistance = sphereRadius * 2;
 const maxPixelRatio = 2;
+const depthFormat = 'depth24plus';
 const queryParams = new URLSearchParams(document.location.search);
 const privateVertexFloatCount = 48;
 const privatePixelFloatCount = 28;
@@ -478,7 +479,7 @@ function createSphereGeometry(radius = sphereRadius, widthSegments = 96, heightS
     for (let x = 0; x < widthSegments; x++) {
       const a = y * (widthSegments + 1) + x;
       const b = a + widthSegments + 1;
-      indices.push(a, b, a + 1, b, b + 1, a + 1);
+      indices.push(a + 1, b, a, a + 1, b + 1, b);
     }
   }
 
@@ -705,6 +706,15 @@ function configureCanvas(canvas, device, context, format) {
   return { height, pixelRatio, width };
 }
 
+function createDepthTexture(device, dimensions) {
+  return device.createTexture({
+    format: depthFormat,
+    label: 'Direct WebGPU depth buffer',
+    size: [dimensions.width, dimensions.height],
+    usage: GPUTextureUsage.RENDER_ATTACHMENT,
+  });
+}
+
 function createPipeline(device, format) {
   const start = performance.now();
   const shaderModule = device.createShaderModule({
@@ -712,6 +722,11 @@ function createPipeline(device, format) {
     label: 'Direct WebGPU proof shader',
   });
   const pipeline = device.createRenderPipeline({
+    depthStencil: {
+      depthCompare: 'less',
+      depthWriteEnabled: true,
+      format: depthFormat,
+    },
     fragment: {
       entryPoint: 'fragmentMain',
       module: shaderModule,
@@ -720,7 +735,7 @@ function createPipeline(device, format) {
     label: 'Direct WebGPU proof pipeline',
     layout: 'auto',
     primitive: {
-      cullMode: 'back',
+      cullMode: 'none',
       topology: 'triangle-list',
     },
     vertex: {
@@ -757,7 +772,7 @@ function bindCanvasControls(canvas) {
     viewState.lastX = event.clientX;
     viewState.lastY = event.clientY;
     viewState.yaw -= dx * 0.008;
-    viewState.pitch = Math.max(-1.2, Math.min(1.2, viewState.pitch - dy * 0.008));
+    viewState.pitch = Math.max(-1.2, Math.min(1.2, viewState.pitch + dy * 0.008));
   });
 
   canvas.addEventListener('pointerup', (event) => {
@@ -945,6 +960,7 @@ async function main() {
   const { device } = await createDevice();
   const format = navigator.gpu.getPreferredCanvasFormat();
   let dimensions = configureCanvas(canvas, device, context, format);
+  let depthTexture = createDepthTexture(device, dimensions);
   const pipeline = createPipeline(device, format);
 
   const meshStart = performance.now();
@@ -1016,6 +1032,8 @@ async function main() {
   bindCanvasControls(canvas);
   window.addEventListener('resize', () => {
     dimensions = configureCanvas(canvas, device, context, format);
+    depthTexture.destroy();
+    depthTexture = createDepthTexture(device, dimensions);
   });
 
   const updateFps = createFpsMeter();
@@ -1037,6 +1055,12 @@ async function main() {
           view: context.getCurrentTexture().createView(),
         },
       ],
+      depthStencilAttachment: {
+        depthClearValue: 1,
+        depthLoadOp: 'clear',
+        depthStoreOp: 'store',
+        view: depthTexture.createView(),
+      },
     });
     pass.setPipeline(pipeline);
     pass.setBindGroup(0, bindGroup);
