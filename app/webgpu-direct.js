@@ -25,6 +25,8 @@ const privatePixelFloatCount = 28;
 const publicUniformPortCount = 39;
 const publicUniformFloatCount = publicUniformPortCount * 4;
 const lightDataFloatCount = 4;
+const materialXBoolUniformWarning = 'WGSL does not allow boolean types to be stored in uniform or storage address spaces.';
+const materialXKnownWarnings = new Set();
 
 const materialPortIndex = {
   base: 0,
@@ -409,7 +411,19 @@ async function loadMaterialX() {
   const { default: createMaterialX } = await import(loaderUrl);
   return createMaterialX({
     locateFile: file => new URL(file, runtimeBaseUrl).href,
+    printErr: handleMaterialXPrintErr,
   });
+}
+
+function handleMaterialXPrintErr(value) {
+  const message = String(value);
+  if (message.includes(materialXBoolUniformWarning)) {
+    materialXKnownWarnings.add(materialXBoolUniformWarning);
+    setMetric('shaderNotes', 'bool uniform mapped');
+    return;
+  }
+
+  console.warn(`[MaterialX] ${message}`);
 }
 
 function normalizeMaterialVariableName(variable) {
@@ -514,6 +528,7 @@ async function initializeMaterialXShaderSupport(materialControl) {
     setMetric('shaderTarget', activeSample?.target || '-');
     setMetric('shaderContract', activeSample ? `${activeSample.uniformCount} public ports` : '-');
     setMetric('shaderSource', activeSample ? `${activeSample.vertexLines}v / ${activeSample.pixelLines}p lines` : '-');
+    setMetric('shaderNotes', materialXKnownWarnings.size ? 'bool uniform mapped' : 'none');
     materialControl.refreshOptions();
     materialControl.applyMaterial(activeMaterialId, { updateUrl: false });
     setStatus('Ready');
@@ -521,6 +536,7 @@ async function initializeMaterialXShaderSupport(materialControl) {
     console.error(error);
     setMetric('shaderTarget', 'fallback');
     setMetric('shaderContract', error?.message || String(error));
+    setMetric('shaderNotes', 'fallback active');
     setStatus('Shadergen fallback active');
   }
 }
