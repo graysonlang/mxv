@@ -26,6 +26,7 @@
     "vscode:debug": "npm run serve -- --vscode",
     "vscode:debug:https": "npm run serve:https -- --vscode",
     "cert:dev": "ESP_DEV_CERT_NAME=$npm_package_config_esp_dev_cert_name esp-generate-dev-cert",
+    "inspect:payload": "node ./scripts/inspect-materialx-payload.mjs",
     "inspect:shadergen": "node ./scripts/inspect-materialx-generators.mjs",
     "lint": "eslint .",
     "test": "echo \"Error: no test specified\" && exit 1",

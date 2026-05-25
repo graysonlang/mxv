@@ -116,6 +116,13 @@ The command loads the `@graysonlang/mx` runtime package, generates shader source
 npm run inspect:shadergen -- --sample=standard --json
 ```
 
+For a broader payload inventory, including exposed generator classes, `GenOptions`, enums, emitted declarations, and shader uniform blocks, use:
+
+```sh
+npm run inspect:payload
+npm run inspect:payload -- --interface=both --json
+```
+
 Against the current pinned MaterialX runtime, `v1.39.5`, the result is:
 
 - `EsslShaderGenerator` emits GLSL ES 3.00 source with `#version 300 es`.

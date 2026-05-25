@@ -76,8 +76,11 @@ npm run build
 npm run verify
 cd ../mxv
 npm install --no-save ../mx
+npm run inspect:payload
 npm run build
 ```
+
+This is preferred over global `npm link` for this repo pair because it keeps the local package override explicit in `mxv` and avoids hidden global npm link state. If `node_modules/@graysonlang/mx` is installed as a symlink, rebuilding `../mx` is enough for the next `mxv` build or diagnostic command to see the refreshed runtime files.
 
 When the GitHub dependency should be refreshed, commit the regenerated `dist/runtime` files in the `mx` repo, then reinstall in `mxv`. The package version still records the upstream MaterialX version, for example `@graysonlang/mx@1.39.5`, but `mxv` does not depend on the package being published to the npm registry.
 
@@ -98,6 +101,13 @@ npm run inspect:shadergen
 ```
 
 This is useful when checking WebGPU readiness. Against the current `@graysonlang/mx@1.39.5` runtime, the `WgslShaderGenerator` is available but emits Vulkan-style GLSL rather than browser WGSL.
+
+Inspect the broader runtime payload, exposed generator classes, `GenOptions`, enum values, emitted shader syntax, declarations, and uniform blocks:
+
+```sh
+npm run inspect:payload
+npm run inspect:payload -- --interface=both --json
+```
 
 ## Run
 
