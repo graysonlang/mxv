@@ -3,12 +3,14 @@
 import index from './webgpu-direct.html';
 import { Box3, Vector3 } from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { materialSamples as materialSampleSources } from '../src/materialx-samples.js';
 
 export function getFilePaths() {
   return { index };
 }
 
 const defaultGeometry = 'vendor/MaterialX/resources/Geometry/shaderball.glb';
+const runtimeBaseUrl = new URL('./vendor/materialx-runtime/', import.meta.url);
 const appStartTime = performance.now();
 const cameraFov = 60 * Math.PI / 180;
 const cameraNear = 0.05;
@@ -66,6 +68,39 @@ const materialPortIndex = {
   thinWalled: 38,
 };
 
+const materialVariableAliases = {
+  base_color: 'baseColor',
+  coat_IOR: 'coatIor',
+  coat_affect_color: 'coatAffectColor',
+  coat_affect_roughness: 'coatAffectRoughness',
+  coat_anisotropy: 'coatAnisotropy',
+  coat_color: 'coatColor',
+  coat_roughness: 'coatRoughness',
+  coat_rotation: 'coatRotation',
+  diffuse_roughness: 'diffuseRoughness',
+  emission_color: 'emissionColor',
+  sheen_color: 'sheenColor',
+  sheen_roughness: 'sheenRoughness',
+  specular_IOR: 'specularIor',
+  specular_anisotropy: 'specularAnisotropy',
+  specular_color: 'specularColor',
+  specular_roughness: 'specularRoughness',
+  specular_rotation: 'specularRotation',
+  subsurface_anisotropy: 'subsurfaceAnisotropy',
+  subsurface_color: 'subsurfaceColor',
+  subsurface_radius: 'subsurfaceRadius',
+  subsurface_scale: 'subsurfaceScale',
+  thin_film_IOR: 'thinFilmIor',
+  thin_film_thickness: 'thinFilmThickness',
+  thin_walled: 'thinWalled',
+  transmission_color: 'transmissionColor',
+  transmission_depth: 'transmissionDepth',
+  transmission_dispersion: 'transmissionDispersion',
+  transmission_extra_roughness: 'transmissionExtraRoughness',
+  transmission_scatter: 'transmissionScatter',
+  transmission_scatter_anisotropy: 'transmissionScatterAnisotropy',
+};
+
 const baseMaterialPorts = {
   base: 1,
   baseColor: [0.8, 0.8, 0.8],
@@ -108,7 +143,7 @@ const baseMaterialPorts = {
   thinWalled: 0,
 };
 
-const materialSamples = {
+const fallbackMaterialSamples = {
   standard: {
     label: 'Standard',
     ports: baseMaterialPorts,
@@ -142,6 +177,7 @@ const materialSamples = {
     },
   },
 };
+let materialSamples = createFallbackMaterialSamples();
 const requestedMaterial = queryParams.get('material');
 let activeMaterialId = Object.hasOwn(materialSamples, requestedMaterial) ? requestedMaterial : 'standard';
 let pendingMaterialSwitch = null;
@@ -333,6 +369,28 @@ function setMetric(name, value) {
   setText(`[data-metric="${name}"]`, value);
 }
 
+function clonePorts(ports) {
+  return Object.fromEntries(
+    Object.entries(ports).map(([name, value]) => [
+      name,
+      Array.isArray(value) ? [...value] : value,
+    ]),
+  );
+}
+
+function createFallbackMaterialSamples() {
+  return Object.fromEntries(
+    Object.entries(fallbackMaterialSamples).map(([id, sample]) => [
+      id,
+      {
+        label: sample.label,
+        ports: clonePorts(sample.ports),
+        source: 'fallback',
+      },
+    ]),
+  );
+}
+
 function formatDuration(ms) {
   if (!Number.isFinite(ms)) return '-';
   if (ms < 10) return `${ms.toFixed(1)} ms`;
@@ -344,6 +402,127 @@ function recordDuration(name, startTime) {
   const duration = performance.now() - startTime;
   setMetric(name, formatDuration(duration));
   return duration;
+}
+
+async function loadMaterialX() {
+  const loaderUrl = new URL('JsMaterialXGenShader.js', runtimeBaseUrl).href;
+  const { default: createMaterialX } = await import(loaderUrl);
+  return createMaterialX({
+    locateFile: file => new URL(file, runtimeBaseUrl).href,
+  });
+}
+
+function normalizeMaterialVariableName(variable) {
+  return materialVariableAliases[variable] || variable;
+}
+
+function parseMaterialValue(type, value) {
+  const normalized = String(value ?? '').trim();
+  if (!normalized) return null;
+  if (normalized === 'true') return 1;
+  if (normalized === 'false') return 0;
+
+  if (type === 'color3' || type === 'vector3') {
+    return normalized.split(',').map(component => Number(component.trim()));
+  }
+
+  const numeric = Number(normalized);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function getBlockPorts(block) {
+  const size = typeof block?.size === 'function' ? block.size() : 0;
+  const ports = [];
+  for (let index = 0; index < size; index++) {
+    const port = block.get(index);
+    const value = port.getValue?.();
+    ports.push({
+      type: port.getType?.()?.getName?.() || '',
+      value: value?.getValueString?.() || '',
+      variable: port.getVariable?.() || '',
+    });
+  }
+  return ports;
+}
+
+async function generateMaterialSample(mx, sampleId) {
+  if (!mx.WgslShaderGenerator) {
+    throw new Error('MaterialX runtime does not expose WgslShaderGenerator.');
+  }
+
+  const materialx = materialSampleSources[sampleId];
+  const fallback = fallbackMaterialSamples[sampleId] || fallbackMaterialSamples.standard;
+  const document = mx.createDocument();
+  await mx.readFromXmlString(document, materialx);
+
+  const generator = mx.WgslShaderGenerator.create();
+  const context = new mx.GenContext(generator);
+  const libraries = mx.loadStandardLibraries(context);
+  document.importLibrary(libraries);
+  context.getOptions().shaderInterfaceType = mx.ShaderInterfaceType.SHADER_INTERFACE_COMPLETE;
+
+  const element = mx.findRenderableElement(document);
+  if (!element) {
+    throw new Error(`No renderable MaterialX element found for sample "${sampleId}".`);
+  }
+
+  const shader = generator.generate(element.getNamePath(), element, context);
+  const pixelStage = shader.getStage('pixel');
+  const publicUniforms = pixelStage.getUniformBlocks().PublicUniforms;
+  const ports = clonePorts(fallback.ports);
+  const generatedPorts = getBlockPorts(publicUniforms);
+
+  for (const port of generatedPorts) {
+    const name = normalizeMaterialVariableName(port.variable);
+    if (materialPortIndex[name] === undefined) continue;
+
+    const parsedValue = parseMaterialValue(port.type, port.value);
+    if (parsedValue !== null) ports[name] = parsedValue;
+  }
+
+  const vertexSource = shader.getSourceCode('vertex');
+  const pixelSource = shader.getSourceCode('pixel');
+  return {
+    label: fallback.label,
+    ports,
+    renderable: element.getNamePath(),
+    source: 'shadergen',
+    target: typeof generator.getTarget === 'function' ? generator.getTarget() : 'unknown',
+    uniformCount: generatedPorts.length,
+    vertexLines: vertexSource.split('\n').length,
+    pixelLines: pixelSource.split('\n').length,
+  };
+}
+
+async function initializeMaterialXShaderSupport(materialControl) {
+  try {
+    setStatus('Loading MaterialX shadergen');
+    const materialXStart = performance.now();
+    const mx = await loadMaterialX();
+    recordDuration('materialXLoad', materialXStart);
+
+    setStatus('Generating MaterialX shader contract');
+    const shaderStart = performance.now();
+    const generatedEntries = [];
+    for (const sampleId of Object.keys(materialSampleSources)) {
+      generatedEntries.push([sampleId, await generateMaterialSample(mx, sampleId)]);
+    }
+
+    materialSamples = Object.fromEntries(generatedEntries);
+    const activeSample = materialSamples[activeMaterialId] || generatedEntries[0]?.[1];
+    recordDuration('shaderGeneration', shaderStart);
+    setMetric('shaderTarget', activeSample?.target || '-');
+    setMetric('shaderContract', activeSample ? `${activeSample.uniformCount} public ports` : '-');
+    setMetric('shaderSource', activeSample ? `${activeSample.vertexLines}v / ${activeSample.pixelLines}p lines` : '-');
+    materialControl.refreshOptions();
+    materialControl.applyMaterial(activeMaterialId, { updateUrl: false });
+    setStatus('Ready');
+  } catch (error) {
+    console.error(error);
+    setMetric('shaderTarget', 'fallback');
+    setMetric('shaderContract', error?.message || String(error));
+    setStatus('Shadergen fallback active');
+  }
 }
 
 function recordMaterialSwitchSample(duration) {
@@ -848,12 +1027,19 @@ function writeMaterialUniforms(publicUniformData, materialId) {
 
 function bindMaterialSelect(device, publicUniformBuffer, publicUniformData) {
   const select = document.getElementById('material-sample');
-  if (!select) return;
+  if (!select) {
+    return {
+      applyMaterial: () => {},
+      refreshOptions: () => {},
+    };
+  }
 
-  select.innerHTML = Object.entries(materialSamples)
-    .map(([id, sample]) => `<option value="${id}">${sample.label}</option>`)
-    .join('');
-  select.value = activeMaterialId;
+  const refreshOptions = () => {
+    select.innerHTML = Object.entries(materialSamples)
+      .map(([id, sample]) => `<option value="${id}">${sample.label}</option>`)
+      .join('');
+    select.value = activeMaterialId;
+  };
 
   const applyMaterial = (materialId, options = {}) => {
     const {
@@ -865,7 +1051,7 @@ function bindMaterialSelect(device, publicUniformBuffer, publicUniformData) {
     const sample = writeMaterialUniforms(publicUniformData, activeMaterialId);
     device.queue.writeBuffer(publicUniformBuffer, 0, publicUniformData);
     setMetric('materialUpload', formatDuration(performance.now() - uploadStart));
-    setMetric('material', sample.label);
+    setMetric('material', `${sample.label} (${sample.source})`);
 
     if (measure) {
       pendingMaterialSwitch = {
@@ -914,7 +1100,13 @@ function bindMaterialSelect(device, publicUniformBuffer, publicUniformData) {
 
   select.addEventListener('change', () => applyMaterial(select.value, { measure: true }));
   document.querySelector('[data-benchmark-switches]')?.addEventListener('click', runBenchmark);
+  refreshOptions();
   applyMaterial(activeMaterialId, { updateUrl: false });
+
+  return {
+    applyMaterial,
+    refreshOptions,
+  };
 }
 
 function createFpsMeter() {
@@ -990,7 +1182,11 @@ async function main() {
   });
   device.queue.writeBuffer(lightDataBuffer, 0, lightData);
   setMetric('contract', 'bindings 0-7');
-  bindMaterialSelect(device, publicUniformBuffer, publicUniformData);
+  const materialControl = bindMaterialSelect(device, publicUniformBuffer, publicUniformData);
+  initializeMaterialXShaderSupport(materialControl).catch((error) => {
+    console.error(error);
+    setStatus('Shadergen fallback active');
+  });
 
   const bindGroup = device.createBindGroup({
     entries: [

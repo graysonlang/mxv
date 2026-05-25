@@ -286,6 +286,8 @@ The proof draw now uses the vendored MaterialX `shaderball.glb` by default. The 
 
 The direct pipeline includes a `depth24plus` depth attachment and uses single-sided rasterization with `frontFace: "ccw"` and `cullMode: "back"`. The shaderball GLB and generated sphere fallback now both use winding that matches their outward normals, which gives this spike an efficient WebGPU-style draw path while still catching future asset or transform mistakes.
 
+The direct page now loads the MaterialX runtime and runs `WgslShaderGenerator` for each sample. Since this runtime still emits Vulkan-style GLSL rather than browser WGSL, the page does not feed the generated source directly into WebGPU yet. It does use the generated shader object to extract `PublicUniforms_pixel` and upload the generated standard-surface values into the WebGPU uniform buffer. The initial hand-authored JS values remain as a fallback while shadergen is loading or if shadergen fails.
+
 This is not yet a direct translation of the generated `wgsl-complete.pixel.glsl` output. Instead, it is a browser-WGSL bridge that keeps the generated binding numbers and public-uniform semantic order while using a compact hand-authored standard-surface approximation. That gives the spike a real WebGPU resource contract to measure before investing in a broader shader translator.
 
 The direct page includes a material selector for the generated `standard` and `pearl` sample values, and accepts the same state through the URL:
