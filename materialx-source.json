@@ -1,6 +1,13 @@
 {
   "repo": "https://github.com/AcademySoftwareFoundation/MaterialX.git",
   "ref": "v1.39.5",
-  "sparseExcludes": [
-  ]
+  "sparseIncludes": [
+    "resources",
+    "javascript/MaterialXView/public"
+  ],
+  "requiredAssetRoots": [
+    "resources",
+    "javascript/MaterialXView/public"
+  ],
+  "updateSubmodules": false
 }

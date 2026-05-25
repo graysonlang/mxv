@@ -11,7 +11,7 @@ The current app can load MaterialX example materials and geometry from the vendo
 - `app/webgpu.js` is an experimental WebGPU material lab entry point.
 - `app/materialx-viewer/` contains the adapted MaterialX web viewer code.
 - `@graysonlang/mx` provides the prebuilt MaterialX JavaScript/WASM shader-generation runtime.
-- `scripts/setup-materialx.mjs` clones or updates `vendor/MaterialX` from the pinned source in `materialx-source.json` for viewer resources.
+- `scripts/setup-materialx.mjs` clones or updates the filtered `vendor/MaterialX` viewer asset checkout from the pinned source in `materialx-source.json`.
 - `scripts/prepare-static-assets.mjs` copies runtime files and selected MaterialX resources into `dist`.
 - `docs/materialx-rendering-strategy.md` captures the WebGL/WebGPU rendering strategy rationale.
 
@@ -39,24 +39,24 @@ Or install JavaScript dependencies and fetch viewer resources separately:
 
 ```sh
 npm install
-npm run setup:materialx
+npm run setup:assets
 ```
 
 Refresh viewer resources after setup:
 
 ```sh
-npm run setup:materialx
+npm run setup:assets
 ```
 
-By default, setup uses the known-good MaterialX source pinned in `materialx-source.json`. The clone is a blobless partial clone, and sparse checkout may omit top-level folders that are not needed by the viewer. You can override the source with environment variables or flags when testing an upgrade, branch, fork, tag, or commit:
+By default, setup uses the known-good MaterialX source pinned in `materialx-source.json`. The runtime package comes from npm/GitHub during `npm install`; the setup script only clones viewer assets into `vendor/MaterialX`. The clone is a blobless partial clone, uses sparse checkout for the required asset roots, and skips MaterialX submodules. You can override the source with environment variables or flags when testing an upgrade, branch, fork, tag, or commit:
 
 ```sh
-MATERIALX_REF=main npm run setup:materialx
-npm run setup:materialx -- --repo=https://github.com/AcademySoftwareFoundation/MaterialX.git --ref=v1.39.5
-npm run setup:materialx -- --force
+MATERIALX_REF=main npm run setup:assets
+npm run setup:assets -- --repo=https://github.com/AcademySoftwareFoundation/MaterialX.git --ref=v1.39.5
+npm run setup:assets -- --force
 ```
 
-If `vendor/MaterialX` already exists as a non-git source copy and has the expected MaterialX layout, setup will use it. Pass `--force` to replace it with a fresh clone.
+If `vendor/MaterialX` already exists as a non-git asset copy and has the expected viewer asset folders, setup will use it. Pass `--force` to replace it with a fresh clone. `npm run setup:materialx` remains available as a compatibility alias for `npm run setup:assets`.
 
 ## Runtime Dependency
 
@@ -89,7 +89,7 @@ Build the full web app:
 npm run build
 ```
 
-The full build prepares static assets, copies the prebuilt runtime from `@graysonlang/mx`, then bundles the app into `dist`.
+The full build prepares static assets, copies the prebuilt runtime from `@graysonlang/mx`, validates that the filtered MaterialX viewer assets are present, then bundles the app into `dist`.
 
 Inspect what the bundled MaterialX shader generators emit:
 

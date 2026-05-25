@@ -16,6 +16,13 @@ const materialXResourceExtensions = new Set([
   '.tga',
 ]);
 const runtimeExtensions = new Set(['.data', '.js', '.wasm']);
+const requiredRuntimeFiles = [
+  'JsMaterialXGenShader.data',
+  'JsMaterialXGenShader.js',
+  'JsMaterialXGenShader.wasm',
+];
+const materialXResourceRoot = 'vendor/MaterialX/resources';
+const materialXViewerAssetRoot = 'vendor/MaterialX/javascript/MaterialXView/public';
 
 async function exists(filePath) {
   try {
@@ -24,6 +31,28 @@ async function exists(filePath) {
   } catch {
     return false;
   }
+}
+
+async function directoryExists(filePath) {
+  try {
+    return (await stat(filePath)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function missingMaterialXAssetsMessage(srcRoot) {
+  return [
+    `Missing ${srcRoot}.`,
+    'Run `npm run setup:assets` to clone the filtered MaterialX viewer assets.',
+  ].join(' ');
+}
+
+function missingRuntimeMessage(filename) {
+  return [
+    `Missing @graysonlang/mx runtime file: ${filename}.`,
+    'Run `npm install` to restore the runtime package, or refresh the GitHub dependency if the package shape changed.',
+  ].join(' ');
 }
 
 async function walkFiles(dir) {
@@ -54,8 +83,12 @@ async function copyIfChanged(src, dest) {
   await copyFile(src, dest);
 }
 
-async function copyMatching(root, outdir, srcRoot, extensionSet) {
+async function copyMatching(root, outdir, srcRoot, extensionSet, { required = false } = {}) {
   const absoluteSrcRoot = path.join(root, srcRoot);
+  if (required && !await directoryExists(absoluteSrcRoot)) {
+    throw new Error(missingMaterialXAssetsMessage(srcRoot));
+  }
+
   const files = await walkFiles(absoluteSrcRoot);
   const copied = [];
 
@@ -72,12 +105,23 @@ async function copyMatching(root, outdir, srcRoot, extensionSet) {
 
 function resolveMaterialXRuntimeRoot(root) {
   const requireFromRoot = createRequire(path.join(root, 'package.json'));
-  const packageJsonPath = requireFromRoot.resolve('@graysonlang/mx/package.json');
-  return path.join(path.dirname(packageJsonPath), 'dist', 'runtime');
+  try {
+    const packageJsonPath = requireFromRoot.resolve('@graysonlang/mx/package.json');
+    return path.join(path.dirname(packageJsonPath), 'dist', 'runtime');
+  } catch (error) {
+    throw new Error('Missing @graysonlang/mx runtime package. Run `npm install` before building.', { cause: error });
+  }
 }
 
 async function copyMaterialXRuntime(root, outdir) {
   const runtimeRoot = resolveMaterialXRuntimeRoot(root);
+  await Promise.all(requiredRuntimeFiles.map(async (filename) => {
+    const runtimeFile = path.join(runtimeRoot, filename);
+    if (!await exists(runtimeFile)) {
+      throw new Error(missingRuntimeMessage(filename));
+    }
+  }));
+
   const files = await walkFiles(runtimeRoot);
   const copied = [];
 
@@ -94,8 +138,11 @@ async function copyMaterialXRuntime(root, outdir) {
 }
 
 async function copyViewerAssets(root, outdir) {
-  const srcRoot = 'vendor/MaterialX/javascript/MaterialXView/public';
-  const files = await walkFiles(path.join(root, srcRoot));
+  if (!await directoryExists(path.join(root, materialXViewerAssetRoot))) {
+    throw new Error(missingMaterialXAssetsMessage(materialXViewerAssetRoot));
+  }
+
+  const files = await walkFiles(path.join(root, materialXViewerAssetRoot));
   const copied = [];
 
   for (const file of files) {
@@ -131,7 +178,7 @@ export async function prepareStaticAssets({
   ] = await Promise.all([
     copyMatching(root, outdir, 'assets', imageExtensions),
     copyMaterialXRuntime(root, outdir),
-    copyMatching(root, outdir, 'vendor/MaterialX/resources', materialXResourceExtensions),
+    copyMatching(root, outdir, materialXResourceRoot, materialXResourceExtensions, { required: true }),
     copyViewerAssets(root, outdir),
   ]);
 

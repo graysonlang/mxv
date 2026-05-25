@@ -28,7 +28,7 @@ function readSourceConfig() {
 const sourceConfig = readSourceConfig();
 const repo = args.get('repo') || process.env.MATERIALX_REPO || sourceConfig.repo || 'https://github.com/AcademySoftwareFoundation/MaterialX.git';
 const ref = args.get('ref') || process.env.MATERIALX_REF || sourceConfig.ref || 'main';
-const sparseExcludes = Array.isArray(sourceConfig.sparseExcludes) ? sourceConfig.sparseExcludes : [];
+const updateSubmodulesEnabled = sourceConfig.updateSubmodules !== false;
 const force = args.has('force') || process.env.MATERIALX_VENDOR_FORCE === '1';
 
 function run(command, commandArgs, options = {}) {
@@ -50,9 +50,8 @@ function runOutput(command, commandArgs, options = {}) {
   });
 }
 
-function hasMaterialXShape() {
-  return existsSync(path.join(materialXDir, 'source', 'JsMaterialX'))
-    && existsSync(path.join(materialXDir, 'libraries'));
+function hasMaterialXAssets() {
+  return requiredAssetRoots.every(assetRoot => existsSync(path.join(materialXDir, assetRoot)));
 }
 
 function isCommitHash(value) {
@@ -64,20 +63,47 @@ function normalizeSparsePath(value) {
   return value.trim().replace(/^\/+|\/+$/g, '');
 }
 
+function readPathList(name) {
+  return Array.isArray(sourceConfig[name])
+    ? sourceConfig[name].map(normalizeSparsePath).filter(Boolean)
+    : [];
+}
+
+function sparseDirectoryPattern(value) {
+  return `/${value}/`;
+}
+
+function formatRequiredAssetRoots() {
+  return requiredAssetRoots
+    .map(assetRoot => path.join('vendor', 'MaterialX', assetRoot))
+    .join(', ');
+}
+
+const sparseIncludes = readPathList('sparseIncludes');
+const sparseExcludes = readPathList('sparseExcludes');
+const requiredAssetRoots = readPathList('requiredAssetRoots');
+if (requiredAssetRoots.length === 0) {
+  requiredAssetRoots.push('resources', 'javascript/MaterialXView/public');
+}
+
 function configureSparseCheckout() {
-  const excludes = sparseExcludes.map(normalizeSparsePath).filter(Boolean);
-  if (excludes.length === 0) return;
+  if (sparseIncludes.length === 0 && sparseExcludes.length === 0) return;
 
   run('git', ['sparse-checkout', 'init', '--no-cone'], { cwd: materialXDir });
+  const patterns = sparseIncludes.length > 0
+    ? sparseIncludes.map(sparseDirectoryPattern)
+    : ['/*'];
+
   run('git', [
     'sparse-checkout',
     'set',
-    '/*',
-    ...excludes.map(excludePath => `!/${excludePath}/`),
+    ...patterns,
+    ...sparseExcludes.map(excludePath => `!/${excludePath}/`),
   ], { cwd: materialXDir });
 }
 
 function updateSubmodules() {
+  if (!updateSubmodulesEnabled) return;
   run('git', ['submodule', 'update', '--init', '--recursive', '--depth=1'], { cwd: materialXDir });
 }
 
@@ -140,17 +166,17 @@ if (!existsSync(materialXDir)) {
 } else if (existsSync(path.join(materialXDir, '.git'))) {
   console.log(`Updating MaterialX checkout in ${path.relative(root, materialXDir)}...`);
   checkoutRef();
-} else if (hasMaterialXShape()) {
-  console.log(`Using existing ${path.relative(root, materialXDir)} directory. It is not a git checkout; pass --force to replace it.`);
+} else if (hasMaterialXAssets()) {
+  console.log(`Using existing ${path.relative(root, materialXDir)} asset directory. It is not a git checkout; pass --force to replace it.`);
 } else {
-  console.error(`${path.relative(root, materialXDir)} exists, but does not look like a MaterialX checkout.`);
+  console.error(`${path.relative(root, materialXDir)} exists, but does not include the expected MaterialX viewer asset folders.`);
   console.error('Move it aside or rerun with --force.');
   process.exit(1);
 }
 
-if (!hasMaterialXShape()) {
-  console.error('MaterialX setup did not produce the expected source/JsMaterialX and libraries folders.');
+if (!hasMaterialXAssets()) {
+  console.error(`MaterialX setup did not produce the expected viewer asset folders: ${formatRequiredAssetRoots()}.`);
   process.exit(1);
 }
 
-console.log('MaterialX vendor setup is ready.');
+console.log('MaterialX viewer asset setup is ready.');

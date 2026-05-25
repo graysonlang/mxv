@@ -29,7 +29,8 @@
     "inspect:shadergen": "node ./scripts/inspect-materialx-generators.mjs",
     "lint": "eslint .",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "bootstrap": "npm install && npm run setup:materialx",
+    "bootstrap": "npm install && npm run setup:assets",
+    "setup:assets": "node ./scripts/setup-materialx.mjs",
     "setup:materialx": "node ./scripts/setup-materialx.mjs"
   },
   "config": {
