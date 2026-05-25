@@ -126,10 +126,10 @@ The default dump writes the `standard` and `pearl` Wgsl-generator outputs plus a
 Start the development server:
 
 ```sh
-npm run serve -- --vscode
+npm run dev
 ```
 
-Then open:
+This starts ESP on the default port and launches Chrome. The viewer is available at:
 
 ```text
 http://127.0.0.1:8000/

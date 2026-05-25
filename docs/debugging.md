@@ -7,7 +7,7 @@ This document collects local debugging commands that are useful while working on
 Start the local server:
 
 ```sh
-npm run serve -- --vscode
+npm run dev
 ```
 
 Check that it is responding:
