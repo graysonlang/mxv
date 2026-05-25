@@ -6,7 +6,7 @@ Work in this repository, not the upstream MaterialX checkout. General project se
 
 The upstream MaterialX sources are vendored under `vendor/MaterialX`. Treat that directory as input/reference unless the user explicitly asks to modify vendored source.
 
-Generated Emscripten output goes under `vendor/materialx-runtime`; avoid `vendor/materialx` because macOS case-insensitive filesystems treat it as the same directory as `vendor/MaterialX`.
+Generated Emscripten output lives in the sibling `../mx` runtime package. The viewer copies those package files into `dist/vendor/materialx-runtime` during builds; avoid `vendor/materialx` because macOS case-insensitive filesystems treat it as the same directory as `vendor/MaterialX`.
 
 ## Local Workflow
 
@@ -21,7 +21,7 @@ Generated Emscripten output goes under `vendor/materialx-runtime`; avoid `vendor
 - `app/main.js` is the main viewer.
 - `app/smoke.js` is a smaller shader-generation smoke/debug entry point.
 - `app/materialx-viewer/viewer.js` is copied upstream viewer code with local patches.
-- The Makefile source list is intentionally slim for `JsMaterialXGenShader`. If future MaterialX versions add required binding/source files, update `scripts/materialx-gen-shader.Makefile` and rerun `npm run clean:wasm && npm run build:wasm`.
+- The runtime build now lives in the sibling `../mx` package. If future MaterialX versions add required binding/source files, update the Makefile there and publish or link a refreshed `@graysonlang/mx` package.
 - Specular `none` intentionally does not use MaterialX `SPECULAR_ENVIRONMENT_NONE`. The UI maps it to the prefiltered shader path and binds a black 1x1 radiance texture at runtime so diffuse irradiance remains visible.
 
 ## Browser Debugging

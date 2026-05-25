@@ -110,7 +110,7 @@ The repo includes a local diagnostic command for checking what the bundled Mater
 npm run inspect:shadergen
 ```
 
-The command loads `vendor/materialx-runtime/JsMaterialXGenShader.js`, generates shader source for a representative MaterialX material, classifies the emitted vertex and pixel stages, and prints a short conclusion. It also supports a simpler sample and machine-readable output:
+The command loads the `@graysonlang/mx` runtime package, generates shader source for a representative MaterialX material, classifies the emitted vertex and pixel stages, and prints a short conclusion. It also supports a simpler sample and machine-readable output:
 
 ```sh
 npm run inspect:shadergen -- --sample=standard --json

@@ -1,6 +1,6 @@
 # mxv
 
-`mxv` is a web-based MaterialX viewer experiment. It vendors the upstream MaterialX source tree, builds a focused `JsMaterialXGenShader` WebAssembly bundle with Emscripten, and uses ESP/esbuild plus Three.js for the browser UI.
+`mxv` is a web-based MaterialX viewer experiment. It vendors selected upstream MaterialX resources for viewer assets, consumes a prebuilt `JsMaterialXGenShader` WebAssembly runtime from `@graysonlang/mx`, and uses ESP/esbuild plus Three.js for the browser UI.
 
 The current app can load MaterialX example materials and geometry from the vendored MaterialX resources, compile shaders in the browser through the MaterialX JavaScript bindings, and render the result with configurable render and shader-generation options.
 
@@ -10,36 +10,22 @@ The current app can load MaterialX example materials and geometry from the vendo
 - `app/smoke.js` is a smaller shader-generation smoke test kept for debugging the MaterialX runtime.
 - `app/webgpu.js` is an experimental WebGPU material lab entry point.
 - `app/materialx-viewer/` contains the adapted MaterialX web viewer code.
-- `scripts/materialx-gen-shader.Makefile` builds the slim Emscripten target without CMake.
-- `scripts/setup-materialx.mjs` clones or updates `vendor/MaterialX` from the pinned source in `materialx-source.json`.
+- `@graysonlang/mx` provides the prebuilt MaterialX JavaScript/WASM shader-generation runtime.
+- `scripts/setup-materialx.mjs` clones or updates `vendor/MaterialX` from the pinned source in `materialx-source.json` for viewer resources.
 - `scripts/prepare-static-assets.mjs` copies runtime files and selected MaterialX resources into `dist`.
 - `docs/materialx-rendering-strategy.md` captures the WebGL/WebGPU rendering strategy rationale.
 
 Generated output is intentionally kept out of source control:
 
 - `vendor/MaterialX`
-- `vendor/.build`
-- `vendor/.cache`
-- `vendor/materialx-runtime`
 - `dist`
 
 ## Requirements
 
 - Node.js and npm
 - Git
-- Emscripten SDK with `em++`
 
-The wasm build looks for Emscripten in this order:
-
-1. `CXX=/path/to/em++`
-2. `EMSDK/upstream/emscripten/em++`
-3. `em++` on `PATH`
-
-On this machine, the usual Emscripten setup is:
-
-```sh
-source /Users/grayson/Depots/github/emscripten-core/emsdk/emsdk_env.sh
-```
+Emscripten is only needed when rebuilding the separate `@graysonlang/mx` runtime package, not when building or running this viewer.
 
 ## Setup
 
@@ -49,20 +35,20 @@ Bootstrap a fresh checkout:
 npm run bootstrap
 ```
 
-Or install JavaScript dependencies and fetch MaterialX separately:
+Or install JavaScript dependencies and fetch viewer resources separately:
 
 ```sh
 npm install
 npm run setup:materialx
 ```
 
-Refresh MaterialX after setup:
+Refresh viewer resources after setup:
 
 ```sh
 npm run setup:materialx
 ```
 
-By default, setup uses the known-good MaterialX source pinned in `materialx-source.json`. The clone is a blobless partial clone, and the top-level MaterialX `documents` folder is omitted with sparse checkout. You can override the source with environment variables or flags when testing an upgrade, branch, fork, tag, or commit:
+By default, setup uses the known-good MaterialX source pinned in `materialx-source.json`. The clone is a blobless partial clone, and sparse checkout may omit top-level folders that are not needed by the viewer. You can override the source with environment variables or flags when testing an upgrade, branch, fork, tag, or commit:
 
 ```sh
 MATERIALX_REF=main npm run setup:materialx
@@ -72,19 +58,30 @@ npm run setup:materialx -- --force
 
 If `vendor/MaterialX` already exists as a non-git source copy and has the expected MaterialX layout, setup will use it. Pass `--force` to replace it with a fresh clone.
 
+## Runtime Dependency
+
+The MaterialX JavaScript/WASM runtime is supplied by the `@graysonlang/mx` package repo. For now this repo installs it directly from GitHub instead of relying on a published npm semver package:
+
+```json
+"@graysonlang/mx": "github:graysonlang/mx"
+```
+
+This keeps the expensive Emscripten compile out of the viewer build loop while the runtime package API and packaging shape are still settling. The viewer build copies the installed package runtime files into `dist/vendor/materialx-runtime` so the app can keep using stable browser URLs.
+
+For local runtime development, you can still point npm at a sibling checkout:
+
+```sh
+cd ../mx
+npm run build
+npm run verify
+cd ../mxv
+npm install --no-save ../mx
+npm run build
+```
+
+When the GitHub dependency should be refreshed, commit the regenerated `dist/runtime` files in the `mx` repo, then reinstall in `mxv`. The package version still records the upstream MaterialX version, for example `@graysonlang/mx@1.39.5`, but `mxv` does not depend on the package being published to the npm registry.
+
 ## Build
-
-Build only the MaterialX WebAssembly runtime:
-
-```sh
-npm run build:wasm
-```
-
-Clean the wasm/object build:
-
-```sh
-npm run clean:wasm
-```
 
 Build the full web app:
 
@@ -92,7 +89,7 @@ Build the full web app:
 npm run build
 ```
 
-The full build runs `build:wasm`, prepares static assets, then bundles the app into `dist`.
+The full build prepares static assets, copies the prebuilt runtime from `@graysonlang/mx`, then bundles the app into `dist`.
 
 Inspect what the bundled MaterialX shader generators emit:
 
@@ -100,7 +97,7 @@ Inspect what the bundled MaterialX shader generators emit:
 npm run inspect:shadergen
 ```
 
-This is useful when checking WebGPU readiness. Against the current pinned MaterialX runtime, the `WgslShaderGenerator` is available but emits Vulkan-style GLSL rather than browser WGSL.
+This is useful when checking WebGPU readiness. Against the current `@graysonlang/mx@1.39.5` runtime, the `WgslShaderGenerator` is available but emits Vulkan-style GLSL rather than browser WGSL.
 
 ## Run
 

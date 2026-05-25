@@ -17,8 +17,8 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "build": "npm run build:wasm && node ./scripts/build.mjs --lint --minify",
-    "serve": "npm run build:wasm && node ./scripts/build.mjs --lint --sourcemap --watch --serve",
+    "build": "node ./scripts/build.mjs --lint --minify",
+    "serve": "node ./scripts/build.mjs --lint --sourcemap --watch --serve",
     "serve:https": "ESP_DEV_CERT_NAME=$npm_package_config_esp_dev_cert_name npm run serve -- --host=0.0.0.0 --port=8443",
     "dev": "npm run serve -- --proxy --launch",
     "dev:https": "npm run serve:https -- --proxy --launch",
@@ -30,14 +30,13 @@
     "lint": "eslint .",
     "test": "echo \"Error: no test specified\" && exit 1",
     "bootstrap": "npm install && npm run setup:materialx",
-    "setup:materialx": "node ./scripts/setup-materialx.mjs",
-    "build:wasm": "node ./scripts/build-materialx-wasm.mjs",
-    "clean:wasm": "node ./scripts/build-materialx-wasm.mjs --clean-only"
+    "setup:materialx": "node ./scripts/setup-materialx.mjs"
   },
   "config": {
     "esp_dev_cert_name": "graysonlang-mxv-dev"
   },
   "dependencies": {
+    "@graysonlang/mx": "github:graysonlang/mx",
     "@graysonlang/esp": "^1.0.0",
     "fflate": "^0.8.3",
     "lil-gui": "^0.19.2",

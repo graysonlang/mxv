@@ -1,4 +1,5 @@
 import { mkdir, readdir, rm, stat, copyFile, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 
 const imageExtensions = new Set(['.jpg', '.png']);
@@ -69,6 +70,29 @@ async function copyMatching(root, outdir, srcRoot, extensionSet) {
   return copied.sort();
 }
 
+function resolveMaterialXRuntimeRoot(root) {
+  const requireFromRoot = createRequire(path.join(root, 'package.json'));
+  const packageJsonPath = requireFromRoot.resolve('@graysonlang/mx/package.json');
+  return path.join(path.dirname(packageJsonPath), 'dist', 'runtime');
+}
+
+async function copyMaterialXRuntime(root, outdir) {
+  const runtimeRoot = resolveMaterialXRuntimeRoot(root);
+  const files = await walkFiles(runtimeRoot);
+  const copied = [];
+
+  for (const file of files) {
+    if (!runtimeExtensions.has(path.extname(file).toLowerCase())) continue;
+
+    const rel = path.relative(runtimeRoot, file);
+    const destRel = path.join('vendor', 'materialx-runtime', rel);
+    await copyIfChanged(file, path.join(outdir, destRel));
+    copied.push(destRel);
+  }
+
+  return copied.sort();
+}
+
 async function copyViewerAssets(root, outdir) {
   const srcRoot = 'vendor/MaterialX/javascript/MaterialXView/public';
   const files = await walkFiles(path.join(root, srcRoot));
@@ -106,7 +130,7 @@ export async function prepareStaticAssets({
     materialXViewerAssetPaths,
   ] = await Promise.all([
     copyMatching(root, outdir, 'assets', imageExtensions),
-    copyMatching(root, outdir, 'vendor/materialx-runtime', runtimeExtensions),
+    copyMaterialXRuntime(root, outdir),
     copyMatching(root, outdir, 'vendor/MaterialX/resources', materialXResourceExtensions),
     copyViewerAssets(root, outdir),
   ]);

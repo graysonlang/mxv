@@ -1,9 +1,12 @@
 import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const runtimeDir = path.join(root, 'vendor', 'materialx-runtime');
+const requireFromRoot = createRequire(path.join(root, 'package.json'));
+const materialXPackageJson = requireFromRoot.resolve('@graysonlang/mx/package.json');
+const runtimeDir = path.join(path.dirname(materialXPackageJson), 'dist', 'runtime');
 const runtimeLoader = path.join(runtimeDir, 'JsMaterialXGenShader.js');
 
 const args = new Map();
@@ -73,7 +76,7 @@ const sampleName = args.get('sample') || 'pearl';
 const asJson = args.has('json');
 
 if (!existsSync(runtimeLoader)) {
-  console.error(`Missing ${path.relative(root, runtimeLoader)}. Run \`npm run build:wasm\` first.`);
+  console.error(`Missing ${path.relative(root, runtimeLoader)}. Rebuild or reinstall @graysonlang/mx.`);
   process.exit(1);
 }
 
