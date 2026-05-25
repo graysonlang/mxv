@@ -98,15 +98,38 @@ Use the WebGPU lab as a measured staging area. Keep each phase small enough to v
 | 1. WebGPU lab baseline | Done | Keep a separate `/webgpu.html` entry point that can exercise Three.js `WebGPURenderer`, WebGL2 fallback, model loading, environment loading, orbit controls, FPS display, and MaterialX shader generation inspection. | This is a renderer lab, not a direct MaterialX WGSL renderer yet. |
 | 2. Instrumentation | Done: initial | Measure backend, first-frame time, model load time, HDR/environment setup time, MaterialX runtime load time, shader generation time, average FPS, and frame-time stability. | Metrics are visible in the lab UI and can be compared across WebGPU and fallback modes. |
 | 3. Material state sync | Done: initial | Drive both the visible Three.js proxy material and generated MaterialX sample from the same material state. | The preview controls, MaterialX source tab, and shadergen panel now share state. |
-| 4. Generator reality check | Next | Verify what the pinned MaterialX `WgslShaderGenerator` currently emits, whether a newer MaterialX ref improves WebGPU/WGSL output, and what it would take to consume it directly. | Current pinned output appears Vulkan-GLSL-shaped rather than direct WGSL. |
+| 4. Generator reality check | Done: pinned runtime | Verify what the pinned MaterialX `WgslShaderGenerator` currently emits, whether a newer MaterialX ref improves WebGPU/WGSL output, and what it would take to consume it directly. | `npm run inspect:shadergen` confirms MaterialX 1.39.5 exposes `WgslShaderGenerator`, but it currently emits Vulkan-style GLSL rather than browser WGSL. Re-run after any MaterialX ref upgrade. |
 | 5. Direct WebGPU shader spike | Future | Render one mesh and one generated material through a minimal direct WebGPU pipeline. | Do this only after instrumentation and generator checks clarify the likely payoff. |
 | 6. Product integration decision | Future | Decide whether WebGPU graduates into a supported pro-renderer path, remains a lab feature, or is deferred. | Use measured designer-visible wins as the gate. |
+
+## Generator Reality Check
+
+The repo includes a local diagnostic command for checking what the bundled MaterialX shader generators emit:
+
+```sh
+npm run inspect:shadergen
+```
+
+The command loads `vendor/materialx-runtime/JsMaterialXGenShader.js`, generates shader source for a representative MaterialX material, classifies the emitted vertex and pixel stages, and prints a short conclusion. It also supports a simpler sample and machine-readable output:
+
+```sh
+npm run inspect:shadergen -- --sample=standard --json
+```
+
+Against the current pinned MaterialX runtime, `v1.39.5`, the result is:
+
+- `EsslShaderGenerator` emits GLSL ES 3.00 source with `#version 300 es`.
+- `WgslShaderGenerator` is available, but its reported target is `genglsl`.
+- The generated vertex and pixel stages begin with `#version 450`, use `#pragma shader_stage(...)`, and include GLSL `layout (...)` qualifiers.
+- The generated source does not contain browser WGSL markers such as `@vertex`, `@fragment`, `@group`, `@binding`, or `fn main`.
+
+Conclusion: the current pinned runtime does not provide browser-consumable WGSL. A direct WebGPU renderer would need either a future MaterialX generator that emits true WGSL, a translation step from this Vulkan-style GLSL shape, or a custom WebGPU/TSL rendering path that does not directly consume the generated source.
 
 ## WebGPU Spike Plan
 
 Before committing to a full WebGPU MaterialX renderer, run a narrow benchmark spike:
 
-1. Generate WGSL from MaterialX and inspect the generated vertex and fragment stages.
+1. Re-run `npm run inspect:shadergen` after any MaterialX source upgrade and inspect whether the generated vertex and fragment stages are true WGSL.
 2. Build a tiny direct-WebGPU preview for one mesh, one HDR environment, and a small set of representative MaterialX materials.
 3. Compare against the current WebGL path on representative user machines.
 4. Measure first preview time, shader generation time, shader compile time, steady-state FPS, GPU frame time where available, memory pressure, and interaction latency.

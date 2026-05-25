@@ -94,6 +94,14 @@ npm run build
 
 The full build runs `build:wasm`, prepares static assets, then bundles the app into `dist`.
 
+Inspect what the bundled MaterialX shader generators emit:
+
+```sh
+npm run inspect:shadergen
+```
+
+This is useful when checking WebGPU readiness. Against the current pinned MaterialX runtime, the `WgslShaderGenerator` is available but emits Vulkan-style GLSL rather than browser WGSL.
+
 ## Run
 
 Start the development server:
