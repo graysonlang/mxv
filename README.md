@@ -111,6 +111,15 @@ npm run inspect:payload
 npm run inspect:payload -- --interface=both --json
 ```
 
+Dump generated shader sources for local inspection:
+
+```sh
+npm run dump:shadergen
+npm run dump:shadergen -- --sample=standard --generator=wgsl,essl
+```
+
+The default dump writes the `standard` and `pearl` Wgsl-generator outputs plus a manifest to `vendor/.cache/materialx-shaders`, which is intentionally ignored by git.
+
 ## Run
 
 Start the development server:

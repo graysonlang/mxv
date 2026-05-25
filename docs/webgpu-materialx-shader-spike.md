@@ -91,7 +91,7 @@ Use this as a periodic check, not as a blocker for the exploratory spike.
 | --- | --- | --- |
 | 1. Capture shader contract | Generate a simple material with ESSL and Wgsl outputs, list uniforms, textures, varyings, attributes, and resource bindings. | Done: initial contract captured for `standard` and `pearl`. |
 | 2. Build minimal WebGPU draw | Render a static mesh with a hand-authored WGSL shader and the same camera framing as the lab. | Done: initial `/webgpu-direct.html` proof draw added. |
-| 3. Adapt one MaterialX sample | Translate the smallest representative generated shader into browser WGSL and bind the required uniforms/textures. | Stop if translation becomes a generalized compiler project. |
+| 3. Adapt one MaterialX sample | Translate the smallest representative generated shader into browser WGSL and bind the required uniforms/textures. | In progress: shader dump workflow added; browser-WGSL port remains open. |
 | 4. Add one complex sample | Try a more realistic material such as pearl after the simple case works. | Stop if the second material needs many special cases. |
 | 5. Measure against WebGL | Compare compile/setup time, steady FPS, frame stability, and interaction latency against the existing WebGL path. | Stop if performance is similar and implementation complexity is materially higher. |
 | 6. Decide next step | Choose product path: continue WebGPU backend, keep as lab, or defer. | Decide based on measured designer-visible benefit. |
@@ -250,6 +250,15 @@ Defer full WebGPU backend work if:
 ## Immediate Next Step
 
 Start Phase 3: adapt the smallest generated MaterialX shader path after verifying `/webgpu-direct.html` on a WebGPU-capable browser.
+
+Use the shader dump command to create local generated-source fixtures:
+
+```sh
+npm run dump:shadergen
+npm run dump:shadergen -- --sample=standard --generator=wgsl,essl
+```
+
+The default output lives in `vendor/.cache/materialx-shaders` and includes a `manifest.json` with declarations, bindings, uniform blocks, generator metadata, and per-stage source stats.
 
 The Phase 2 proof draw now covers:
 
