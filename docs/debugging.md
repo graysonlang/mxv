@@ -25,10 +25,14 @@ http://127.0.0.1:8080/
 Explicit renderer modes are available through URI fragments:
 
 ```text
+http://127.0.0.1:8080/
 http://127.0.0.1:8080/#webgl
 http://127.0.0.1:8080/#webgpu
 http://127.0.0.1:8080/#direct
+http://127.0.0.1:8080/#smoke
 ```
+
+With no fragment, the shell currently defaults to the direct WebGPU proof draw.
 
 The WebGL viewer is also served directly at:
 

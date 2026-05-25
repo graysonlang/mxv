@@ -8,6 +8,7 @@ export function getFilePaths() {
 
 const modePages = {
   direct: './webgpu-direct.html',
+  smoke: './smoke.html',
   webgl: './webgl.html',
   webgpu: './webgpu.html',
 };
@@ -15,14 +16,15 @@ const modePages = {
 function getModeFromHash() {
   const mode = window.location.hash.replace(/^#/, '').toLowerCase();
   if (mode === 'webgpu-direct') return 'direct';
+  if (mode === 'smoke-test') return 'smoke';
   if (Object.hasOwn(modePages, mode)) return mode;
-  return 'webgl';
+  return 'direct';
 }
 
 function setActiveMode(mode) {
   const frame = document.querySelector('[data-mode-frame]');
   const openLink = document.querySelector('[data-open-current]');
-  const page = modePages[mode] || modePages.webgl;
+  const page = modePages[mode] || modePages.direct;
 
   if (frame && frame.getAttribute('src') !== page) {
     frame.setAttribute('src', page);

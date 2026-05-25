@@ -138,10 +138,14 @@ http://127.0.0.1:8080/
 The renderer shell uses fragments for mode selection:
 
 ```text
+http://127.0.0.1:8080/
 http://127.0.0.1:8080/#webgl
 http://127.0.0.1:8080/#webgpu
 http://127.0.0.1:8080/#direct
+http://127.0.0.1:8080/#smoke
 ```
+
+With no fragment, the shell currently defaults to the direct WebGPU proof draw.
 
 The smoke test entry is also built and can be opened at:
 

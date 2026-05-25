@@ -36,15 +36,8 @@
       padding: 6px 8px;
     }
 
-    .brand {
-      color: #f0eee7;
-      flex: 0 0 auto;
-      font: 700 13px/1 ui-sans-serif, system-ui, sans-serif;
-      margin-right: 4px;
-      text-decoration: none;
-    }
-
-    .mode-link {
+    .mode-link,
+    .open-link {
       align-items: center;
       background: #111715;
       border: 1px solid #43504b;
@@ -68,15 +61,24 @@
     }
 
     .open-link {
-      color: #c3d0ca;
-      flex: 0 0 auto;
-      font: 12px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      margin-left: auto;
-      text-decoration: none;
+      background: transparent;
+      border-color: #6b7d76;
+      color: #d8e5de;
+      margin-left: 4px;
+      min-width: 96px;
     }
 
     .open-link:hover {
+      border-color: #90aaa0;
       color: #ffffff;
+    }
+
+    .mode-separator {
+      background: rgba(183, 205, 193, 0.28);
+      flex: 0 0 auto;
+      height: 22px;
+      margin-left: 8px;
+      width: 1px;
     }
 
     iframe {
@@ -92,8 +94,11 @@
         grid-template-rows: 40px minmax(0, 1fr);
       }
 
-      .brand,
       .open-link {
+        display: none;
+      }
+
+      .mode-separator {
         display: none;
       }
     }
@@ -103,13 +108,14 @@
 <body>
   <div id="container">
     <nav class="mode-bar" aria-label="Renderer mode">
-      <a class="brand" href="#webgl" aria-label="mxv">mxv</a>
       <a class="mode-link" href="#webgl" data-mode-link="webgl">WebGL</a>
       <a class="mode-link" href="#webgpu" data-mode-link="webgpu">WebGPU</a>
       <a class="mode-link" href="#direct" data-mode-link="direct">Direct</a>
-      <a class="open-link" href="./webgl.html" target="_blank" rel="noreferrer" data-open-current>Open mode</a>
+      <a class="mode-link" href="#smoke" data-mode-link="smoke">Smoke</a>
+      <span class="mode-separator" aria-hidden="true"></span>
+      <a class="open-link" href="./webgpu-direct.html" target="_blank" rel="noreferrer" data-open-current>Open mode</a>
     </nav>
-    <iframe title="mxv renderer mode" data-mode-frame src="./webgl.html"></iframe>
+    <iframe title="mxv renderer mode" data-mode-frame src="./webgpu-direct.html"></iframe>
   </div>
 </body>
 </html>
