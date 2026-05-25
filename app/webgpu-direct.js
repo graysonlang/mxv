@@ -140,6 +140,10 @@ const materialSamples = {
 };
 const requestedMaterial = queryParams.get('material');
 let activeMaterialId = Object.hasOwn(materialSamples, requestedMaterial) ? requestedMaterial : 'standard';
+let pendingMaterialSwitch = null;
+let materialSwitchId = 0;
+let materialBenchmarkTimer = null;
+const materialSwitchSamples = [];
 
 const shaderSource = `
 struct PrivateUniformsVertex {
@@ -336,6 +340,19 @@ function recordDuration(name, startTime) {
   const duration = performance.now() - startTime;
   setMetric(name, formatDuration(duration));
   return duration;
+}
+
+function recordMaterialSwitchSample(duration) {
+  if (!Number.isFinite(duration)) return;
+
+  materialSwitchSamples.push(duration);
+  if (materialSwitchSamples.length > 24) materialSwitchSamples.shift();
+
+  const sorted = [...materialSwitchSamples].sort((a, b) => a - b);
+  const average = materialSwitchSamples.reduce((sum, value) => sum + value, 0) / materialSwitchSamples.length;
+  const p95 = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))];
+  setMetric('materialSwitchAverage', formatDuration(average));
+  setMetric('materialSwitchP95', formatDuration(p95));
 }
 
 function createIdentityMatrix() {
@@ -681,18 +698,66 @@ function bindMaterialSelect(device, publicUniformBuffer, publicUniformData) {
     .join('');
   select.value = activeMaterialId;
 
-  const applyMaterial = (materialId) => {
+  const applyMaterial = (materialId, options = {}) => {
+    const {
+      measure = false,
+      updateUrl = true,
+    } = options;
+    const uploadStart = performance.now();
     activeMaterialId = materialId;
     const sample = writeMaterialUniforms(publicUniformData, activeMaterialId);
     device.queue.writeBuffer(publicUniformBuffer, 0, publicUniformData);
+    setMetric('materialUpload', formatDuration(performance.now() - uploadStart));
     setMetric('material', sample.label);
-    const nextUrl = new URL(document.location.href);
-    nextUrl.searchParams.set('material', activeMaterialId);
-    history.replaceState(null, '', nextUrl);
+
+    if (measure) {
+      pendingMaterialSwitch = {
+        id: ++materialSwitchId,
+        start: uploadStart,
+      };
+    }
+
+    if (updateUrl) {
+      const nextUrl = new URL(document.location.href);
+      nextUrl.searchParams.set('material', activeMaterialId);
+      history.replaceState(null, '', nextUrl);
+    }
   };
 
-  select.addEventListener('change', () => applyMaterial(select.value));
-  applyMaterial(activeMaterialId);
+  const runBenchmark = () => {
+    const button = document.querySelector('[data-benchmark-switches]');
+    const materialIds = Object.keys(materialSamples);
+    const totalSwitches = 12;
+    let switchIndex = 0;
+
+    window.clearTimeout(materialBenchmarkTimer);
+    materialSwitchSamples.length = 0;
+    setMetric('materialSwitchAverage', '-');
+    setMetric('materialSwitchP95', '-');
+    if (button) button.disabled = true;
+    setStatus('Benchmarking material switches');
+
+    const step = () => {
+      const materialId = materialIds[switchIndex % materialIds.length];
+      select.value = materialId;
+      applyMaterial(materialId, { measure: true, updateUrl: false });
+      switchIndex++;
+
+      if (switchIndex < totalSwitches) {
+        materialBenchmarkTimer = window.setTimeout(step, 180);
+        return;
+      }
+
+      if (button) button.disabled = false;
+      setStatus('Ready');
+    };
+
+    step();
+  };
+
+  select.addEventListener('change', () => applyMaterial(select.value, { measure: true }));
+  document.querySelector('[data-benchmark-switches]')?.addEventListener('click', runBenchmark);
+  applyMaterial(activeMaterialId, { updateUrl: false });
 }
 
 function createFpsMeter() {
@@ -838,6 +903,22 @@ async function main() {
     pass.drawIndexed(geometry.indices.length);
     pass.end();
     device.queue.submit([encoder.finish()]);
+
+    if (pendingMaterialSwitch) {
+      const materialSwitch = pendingMaterialSwitch;
+      pendingMaterialSwitch = null;
+      const frameDuration = performance.now() - materialSwitch.start;
+      setMetric('materialSwitchFrame', formatDuration(frameDuration));
+
+      device.queue.onSubmittedWorkDone().then(() => {
+        if (materialSwitch.id < materialSwitchId) return;
+        const gpuDuration = performance.now() - materialSwitch.start;
+        setMetric('materialSwitchGpu', formatDuration(gpuDuration));
+        recordMaterialSwitchSample(gpuDuration);
+      }).catch((error) => {
+        console.warn('Material switch timing failed.', error);
+      });
+    }
 
     if (!firstFrameRecorded) {
       firstFrameRecorded = true;

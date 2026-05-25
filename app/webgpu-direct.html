@@ -87,6 +87,25 @@
       width: 100%;
     }
 
+    .action-button {
+      appearance: none;
+      background: #111715;
+      border: 1px solid #43504b;
+      border-radius: 6px;
+      color: #f0eee7;
+      cursor: pointer;
+      font: 700 12px/1 ui-sans-serif, system-ui, sans-serif;
+      min-height: 30px;
+      min-width: 0;
+      padding: 0 10px;
+      width: 100%;
+    }
+
+    .action-button:disabled {
+      color: #7c8882;
+      cursor: wait;
+    }
+
     option {
       background: #101312;
       color: #f0eee7;
@@ -159,6 +178,10 @@
         <label class="label" for="material-sample">Material</label>
         <select id="material-sample" name="material-sample"></select>
       </div>
+      <div class="control-row">
+        <span class="label">Benchmark</span>
+        <button class="action-button" type="button" data-benchmark-switches>Run switches</button>
+      </div>
       <div class="metric-row">
         <span class="label">Renderer</span>
         <span class="value" data-metric="renderer">-</span>
@@ -182,6 +205,26 @@
       <div class="metric-row">
         <span class="label">Material</span>
         <span class="value" data-metric="material">-</span>
+      </div>
+      <div class="metric-row">
+        <span class="label">Upload</span>
+        <span class="value" data-metric="materialUpload">-</span>
+      </div>
+      <div class="metric-row">
+        <span class="label">Switch Frame</span>
+        <span class="value" data-metric="materialSwitchFrame">-</span>
+      </div>
+      <div class="metric-row">
+        <span class="label">Switch GPU</span>
+        <span class="value" data-metric="materialSwitchGpu">-</span>
+      </div>
+      <div class="metric-row">
+        <span class="label">Switch Avg</span>
+        <span class="value" data-metric="materialSwitchAverage">-</span>
+      </div>
+      <div class="metric-row">
+        <span class="label">Switch p95</span>
+        <span class="value" data-metric="materialSwitchP95">-</span>
       </div>
       <div class="metric-row">
         <span class="label">Mesh</span>

@@ -292,3 +292,12 @@ http://127.0.0.1:8000/webgpu-direct.html?material=pearl
 ```
 
 Next, compare the direct bridge against the WebGL viewer for setup cost, steady FPS, and material-switch latency. If those numbers look promising, the next technical step is to decide whether to port selected generated closure functions into WGSL by hand or build a tiny translator for the narrow subset used by `standard_surface`.
+
+The direct page now exposes material-switch instrumentation:
+
+- `Upload`: CPU-side time to pack the selected material values and enqueue the `PublicUniforms_pixel` buffer update.
+- `Switch Frame`: time from material selection to the next submitted render pass.
+- `Switch GPU`: time from material selection until the queue reports the submitted switch frame as complete.
+- `Switch Avg` and `Switch p95`: rolling stats from manual switches or the built-in switch benchmark.
+
+Use the `Run switches` control on `/webgpu-direct.html` to alternate between `standard` and `pearl` twelve times. This measures the cheap WebGPU uniform-update path before any generated shader translation work is added.
