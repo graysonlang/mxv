@@ -126,23 +126,23 @@ The default dump writes the `standard` and `pearl` Wgsl-generator outputs plus a
 Start the development server:
 
 ```sh
-npm run serve -- --host=127.0.0.1 --port=8080 --vscode
+npm run serve -- --vscode
 ```
 
 Then open:
 
 ```text
-http://127.0.0.1:8080/
+http://127.0.0.1:8000/
 ```
 
 The renderer shell uses fragments for mode selection:
 
 ```text
-http://127.0.0.1:8080/
-http://127.0.0.1:8080/#webgl
-http://127.0.0.1:8080/#webgpu
-http://127.0.0.1:8080/#direct
-http://127.0.0.1:8080/#smoke
+http://127.0.0.1:8000/
+http://127.0.0.1:8000/#webgl
+http://127.0.0.1:8000/#webgpu
+http://127.0.0.1:8000/#direct
+http://127.0.0.1:8000/#smoke
 ```
 
 With no fragment, the shell currently defaults to the direct WebGPU proof draw.
@@ -150,15 +150,15 @@ With no fragment, the shell currently defaults to the direct WebGPU proof draw.
 The smoke test entry is also built and can be opened at:
 
 ```text
-http://127.0.0.1:8080/smoke.html
+http://127.0.0.1:8000/smoke.html
 ```
 
 The renderer pages are also available directly:
 
 ```text
-http://127.0.0.1:8080/webgl.html
-http://127.0.0.1:8080/webgpu.html
-http://127.0.0.1:8080/webgpu-direct.html
+http://127.0.0.1:8000/webgl.html
+http://127.0.0.1:8000/webgpu.html
+http://127.0.0.1:8000/webgpu-direct.html
 ```
 
 ## WebGL Viewer Options
@@ -166,7 +166,7 @@ http://127.0.0.1:8080/webgpu-direct.html
 The WebGL viewer persists common settings in the URL. Friendly names are used for material and model selection:
 
 ```text
-http://127.0.0.1:8080/webgl.html?material=Standard+Surface+Default&model=Shaderball
+http://127.0.0.1:8000/webgl.html?material=Standard+Surface+Default&model=Shaderball
 ```
 
 Supported query params:

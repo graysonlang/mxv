@@ -13,7 +13,7 @@ Generated Emscripten output lives in the sibling `../mx` runtime package. The vi
 - Prefer small, repo-local changes in `mxv`.
 - Run `npm run build` after code changes that affect the app, build scripts, or wasm integration.
 - Use `npm run setup:assets` when a clean checkout needs the filtered MaterialX viewer resources.
-- Use `npm run serve -- --host=127.0.0.1 --port=8080 --vscode` for local browser checks.
+- Use `npm run serve -- --vscode` for local browser checks; ESP serves on port `8000` by default.
 - The ESP live-reload banner is intentionally removed in `scripts/build.mjs`; asset streaming from the viewer can otherwise cause reload loops.
 - Keep generated/vendor folders ignored by tooling: `vendor/MaterialX`, `vendor/.build`, `vendor/.cache`, `vendor/materialx-runtime`, and `dist`.
 
