@@ -14,6 +14,7 @@ The current app can load MaterialX example materials and geometry from the vendo
 - `scripts/setup-materialx.mjs` clones or updates the filtered `vendor/MaterialX` viewer asset checkout from the pinned source in `materialx-source.json`.
 - `scripts/prepare-static-assets.mjs` copies runtime files and selected MaterialX resources into `dist`.
 - `docs/materialx-rendering-strategy.md` captures the WebGL/WebGPU rendering strategy rationale.
+- `docs/webgpu-materialx-shader-spike.md` captures the direct MaterialX-to-WebGPU exploration plan.
 
 Generated output is intentionally kept out of source control:
 

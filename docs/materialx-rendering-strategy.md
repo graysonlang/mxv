@@ -99,7 +99,7 @@ Use the WebGPU lab as a measured staging area. Keep each phase small enough to v
 | 2. Instrumentation | Done: initial | Measure backend, first-frame time, model load time, HDR/environment setup time, MaterialX runtime load time, shader generation time, average FPS, and frame-time stability. | Metrics are visible in the lab UI and can be compared across WebGPU and fallback modes. |
 | 3. Material state sync | Done: initial | Drive both the visible Three.js proxy material and generated MaterialX sample from the same material state. | The preview controls, MaterialX source tab, and shadergen panel now share state. |
 | 4. Generator reality check | Done: pinned runtime | Verify what the pinned MaterialX `WgslShaderGenerator` currently emits, whether a newer MaterialX ref improves WebGPU/WGSL output, and what it would take to consume it directly. | `npm run inspect:shadergen` confirms MaterialX 1.39.5 exposes `WgslShaderGenerator`, but it currently emits Vulkan-style GLSL rather than browser WGSL. Re-run after any MaterialX ref upgrade. |
-| 5. Direct WebGPU shader spike | Future | Render one mesh and one generated material through a minimal direct WebGPU pipeline. | Do this only after instrumentation and generator checks clarify the likely payoff. |
+| 5. Direct WebGPU shader spike | Future | Render one mesh and one generated material through a minimal direct WebGPU pipeline. | Use the focused plan in [webgpu-materialx-shader-spike.md](webgpu-materialx-shader-spike.md) to keep this exploratory and measurement-driven. |
 | 6. Product integration decision | Future | Decide whether WebGPU graduates into a supported pro-renderer path, remains a lab feature, or is deferred. | Use measured designer-visible wins as the gate. |
 
 ## Generator Reality Check
@@ -141,6 +141,8 @@ Before committing to a full WebGPU MaterialX renderer, run a narrow benchmark sp
 3. Compare against the current WebGL path on representative user machines.
 4. Measure first preview time, shader generation time, shader compile time, steady-state FPS, GPU frame time where available, memory pressure, and interaction latency.
 5. Identify which wins are visible to designers, not just theoretically cleaner from a renderer architecture perspective.
+
+The working plan for this exploration lives in [webgpu-materialx-shader-spike.md](webgpu-materialx-shader-spike.md).
 
 ## Decision Gate
 
