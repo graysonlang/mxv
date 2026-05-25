@@ -14,6 +14,9 @@ export function getFilePaths() {
 const runtimeBaseUrl = new URL('./vendor/materialx-runtime/', import.meta.url);
 const defaultGeometry = 'vendor/MaterialX/resources/Geometry/shaderball.glb';
 const defaultEnvironment = 'vendor/MaterialX/resources/Lights/san_giuseppe_bridge_split.hdr';
+const cameraFov = 60;
+const cameraNear = 0.05;
+const cameraFar = 100;
 const queryParams = new URLSearchParams(document.location.search);
 const forceWebGL = queryParams.get('renderer') === 'webgl' || queryParams.get('forceWebGL') === '1';
 const appStartTime = performance.now();
@@ -556,7 +559,7 @@ function createScene() {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x101312);
 
-  const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.05, 100);
+  const camera = new THREE.PerspectiveCamera(cameraFov, window.innerWidth / window.innerHeight, cameraNear, cameraFar);
   camera.position.set(0.25, 0.35, 2.6);
 
   const keyLight = new THREE.DirectionalLight(0xffffff, 2.2);
@@ -590,12 +593,12 @@ function fitCameraToObject(camera, controls, object) {
 
   const radius = Math.max(sphere.radius, 0.5);
   camera.position.set(
-    sphere.center.x + radius * 0.12,
-    sphere.center.y + radius * 0.22,
-    sphere.center.z + radius * 2.4,
+    sphere.center.x,
+    sphere.center.y,
+    sphere.center.z + radius * 2.0,
   );
-  camera.near = Math.max(radius / 200, 0.01);
-  camera.far = Math.max(radius * 12, 20);
+  camera.near = cameraNear;
+  camera.far = cameraFar;
   camera.updateProjectionMatrix();
 
   controls.target.copy(sphere.center);
@@ -690,7 +693,7 @@ async function main() {
   const renderer = await createRenderer(canvas);
   const { camera, scene } = createScene();
   const controls = new OrbitControls(camera, renderer.domElement);
-  controls.enableDamping = true;
+  controls.enableDamping = false;
 
   const material = createPreviewMaterial();
 
