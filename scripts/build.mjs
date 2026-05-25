@@ -7,10 +7,11 @@ function getOptions(args, verbose, logger) {
     assetNames: '[name]',
     bundle: true,
     entryPoints: {
-      index: 'src/index.js',
-      main: 'app/main.js',
-      smoke: 'app/smoke.js',
-      webgpu: 'app/webgpu.js',
+      'index': 'src/index.js',
+      'main': 'app/main.js',
+      'smoke': 'app/smoke.js',
+      'webgpu-direct': 'app/webgpu-direct.js',
+      'webgpu': 'app/webgpu.js',
     },
     format: 'esm',
     loader: {

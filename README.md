@@ -9,6 +9,7 @@ The current app can load MaterialX example materials and geometry from the vendo
 - `app/main.js` is the main model/material viewer.
 - `app/smoke.js` is a smaller shader-generation smoke test kept for debugging the MaterialX runtime.
 - `app/webgpu.js` is an experimental WebGPU material lab entry point.
+- `app/webgpu-direct.js` is a minimal direct-WebGPU proof draw for the MaterialX shader spike.
 - `app/materialx-viewer/` contains the adapted MaterialX web viewer code.
 - `@graysonlang/mx` provides the prebuilt MaterialX JavaScript/WASM shader-generation runtime.
 - `scripts/setup-materialx.mjs` clones or updates the filtered `vendor/MaterialX` viewer asset checkout from the pinned source in `materialx-source.json`.
@@ -128,6 +129,13 @@ The smoke test entry is also built and can be opened at:
 
 ```text
 http://127.0.0.1:8080/smoke.html
+```
+
+The WebGPU labs are available at:
+
+```text
+http://127.0.0.1:8080/webgpu.html
+http://127.0.0.1:8080/webgpu-direct.html
 ```
 
 ## Viewer Options

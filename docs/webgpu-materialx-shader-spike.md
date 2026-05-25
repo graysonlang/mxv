@@ -89,8 +89,8 @@ Use this as a periodic check, not as a blocker for the exploratory spike.
 
 | Phase | Goal | Stop Condition |
 | --- | --- | --- |
-| 1. Capture shader contract | Generate a simple material with ESSL and Wgsl outputs, list uniforms, textures, varyings, attributes, and resource bindings. | Stop if the generated Wgsl shape requires broad translation before a trivial material can run. |
-| 2. Build minimal WebGPU draw | Render a static mesh with a hand-authored WGSL shader and the same camera framing as the lab. | Stop if browser WebGPU setup dominates the work more than expected. |
+| 1. Capture shader contract | Generate a simple material with ESSL and Wgsl outputs, list uniforms, textures, varyings, attributes, and resource bindings. | Done: initial contract captured for `standard` and `pearl`. |
+| 2. Build minimal WebGPU draw | Render a static mesh with a hand-authored WGSL shader and the same camera framing as the lab. | Done: initial `/webgpu-direct.html` proof draw added. |
 | 3. Adapt one MaterialX sample | Translate the smallest representative generated shader into browser WGSL and bind the required uniforms/textures. | Stop if translation becomes a generalized compiler project. |
 | 4. Add one complex sample | Try a more realistic material such as pearl after the simple case works. | Stop if the second material needs many special cases. |
 | 5. Measure against WebGL | Compare compile/setup time, steady FPS, frame stability, and interaction latency against the existing WebGL path. | Stop if performance is similar and implementation complexity is materially higher. |
@@ -105,6 +105,111 @@ Use a deliberately small ladder:
 3. Pearl: stress a more complex preset that is closer to the real motivation.
 
 Pearl is useful as a complexity probe, but it should not be the first shader brought up.
+
+## Phase 1 Findings
+
+The initial shader contract pass used:
+
+```sh
+npm run inspect:payload -- --sample=standard --limit=80
+npm run inspect:payload -- --sample=pearl --limit=120
+npm run inspect:payload -- --sample=standard --interface=both --limit=40
+npm run inspect:payload -- --sample=pearl --interface=both --limit=40
+```
+
+Runtime:
+
+- `@graysonlang/mx@1.39.5`.
+- Upstream MaterialX `v1.39.5`, commit `7b64921ef1d42f2d57871e9d2c43dc11f041f26b`.
+- `WgslShaderGenerator` is available, but reports target `genglsl`.
+- Emitted Wgsl stages are Vulkan-style GLSL: `#version 450`, `#pragma shader_stage(...)`, `layout(...)`.
+- Emitted stages do not contain browser WGSL entry markers such as `@vertex`, `@fragment`, `@group`, `@binding`, or `fn main`.
+- MaterialX emits warnings that WGSL does not allow booleans in uniform or storage address spaces; the Wgsl generator maps those booleans to integer ports in the inspected uniform blocks.
+
+Important result: `standard` and `pearl` have the same shader contract for this standard-surface sample shape. Pearl changes values in `PublicUniforms_pixel`, but it does not add new vertex attributes, textures, uniform blocks, or bindings.
+
+Reduced interface did not reduce the relevant contract for these samples. Complete and reduced interfaces produced the same Wgsl line counts, byte counts, bindings, and uniform blocks.
+
+### Vertex Contract
+
+The generated Wgsl-style vertex stage is small and stable:
+
+- Source size: 83 lines, 2087 bytes.
+- Entry: `#pragma shader_stage(vertex)` plus `void main()`.
+- Vertex inputs:
+  - `layout (location = 0) in vec3 i_position`
+  - `layout (location = 1) in vec3 i_normal`
+  - `layout (location = 2) in vec3 i_tangent`
+- Vertex output:
+  - `layout (location = 0) out VertexData`
+- Bindings:
+  - `layout (std140, binding=0) uniform PrivateUniforms_vertex`
+- `PrivateUniforms_vertex` ports:
+  - `u_worldMatrix: matrix44`
+  - `u_viewProjectionMatrix: matrix44`
+  - `u_worldInverseTransposeMatrix: matrix44`
+
+There are no public material uniforms in the vertex stage for these samples.
+
+### Pixel Contract
+
+The generated Wgsl-style pixel stage is large but also stable between `standard` and `pearl`:
+
+- Source size: roughly 2004 lines and 79.9 KB.
+- Entry: `#pragma shader_stage(fragment)` plus `void main()`.
+- Fragment input:
+  - `layout (location = 0) in VertexData`
+- Fragment output:
+  - `layout (location = 0) out vec4 out1`
+
+Bindings:
+
+- `binding=1`: `PrivateUniforms_pixel`, `std140`.
+- `binding=2`: `texture2D u_envRadiance_texture`.
+- `binding=3`: `sampler u_envRadiance_sampler`.
+- `binding=4`: `texture2D u_envIrradiance_texture`.
+- `binding=5`: `sampler u_envIrradiance_sampler`.
+- `binding=6`: `PublicUniforms_pixel`, `std140`.
+- `binding=7`: `LightData_pixel`, `std140`.
+
+`PrivateUniforms_pixel` ports:
+
+- `u_envMatrix: matrix44`
+- `u_envRadiance: filename`
+- `u_envLightIntensity: float`
+- `u_envRadianceMips: integer`
+- `u_envRadianceSamples: integer`
+- `u_envIrradiance: filename`
+- `u_refractionTwoSided: integer`
+- `u_viewPosition: vector3`
+- `u_numActiveLightSources: integer`
+
+`PublicUniforms_pixel` has 39 standard-surface ports:
+
+- Base and diffuse: `base`, `base_color`, `diffuse_roughness`.
+- Specular and metal: `metalness`, `specular`, `specular_color`, `specular_roughness`, `specular_IOR`, `specular_anisotropy`, `specular_rotation`.
+- Transmission: `transmission`, `transmission_color`, `transmission_depth`, `transmission_scatter`, `transmission_scatter_anisotropy`, `transmission_dispersion`, `transmission_extra_roughness`.
+- Subsurface: `subsurface`, `subsurface_color`, `subsurface_radius`, `subsurface_scale`, `subsurface_anisotropy`.
+- Sheen: `sheen`, `sheen_color`, `sheen_roughness`.
+- Coat: `coat`, `coat_color`, `coat_roughness`, `coat_anisotropy`, `coat_rotation`, `coat_IOR`, `coat_affect_color`, `coat_affect_roughness`.
+- Thin film and emission: `thin_film_thickness`, `thin_film_IOR`, `emission`, `emission_color`.
+- Visibility: `opacity`, `thin_walled`.
+
+`LightData_pixel` reports one inspected port, `light_type: integer`. The shader still expects a light data block, but the initial proof can keep `u_numActiveLightSources` at `0` and bind a minimal placeholder block.
+
+### Translation Implications
+
+The first proof draw should not start with pearl-specific logic. It should bring up the common standard-surface contract once, using the simple material values first.
+
+The minimum browser WebGPU proof still needs:
+
+- A WGSL vertex shader with position, normal, and tangent attributes.
+- A WGSL fragment shader that can accept the `VertexData` equivalent.
+- Uniform buffer layouts matching the generated std140 intent closely enough for the first sample.
+- Environment radiance and irradiance texture/sampler bindings, even if they start as simple placeholder textures.
+- A placeholder light block with zero active lights.
+
+The main risk is not sample complexity yet. The main risk is translating or adapting the roughly 80 KB Vulkan-style fragment shader into browser WGSL without accidentally starting a general-purpose shader compiler.
 
 ## Measurements
 
@@ -144,14 +249,15 @@ Defer full WebGPU backend work if:
 
 ## Immediate Next Step
 
-Start with Phase 1: capture the shader contract for the simple sample and pearl using the existing `npm run inspect:payload` and shader generation diagnostics.
+Start Phase 3: adapt the smallest generated MaterialX shader path after verifying `/webgpu-direct.html` on a WebGPU-capable browser.
 
-The deliverable should be a compact inventory of:
+The Phase 2 proof draw now covers:
 
-- Vertex inputs.
-- Varyings.
-- Uniform blocks.
-- Texture/sampler bindings.
-- Generated helper functions.
-- Shader features used by the simple sample versus pearl.
-- The smallest subset needed for a browser WebGPU proof draw.
+- Request adapter/device.
+- Configure a canvas.
+- Upload one generated sphere mesh.
+- Bind camera/model uniforms.
+- Render with position, normal, and tangent attributes.
+- Use the same camera FOV, near plane, far plane, and approximate fit distance as the lab.
+
+The Phase 3 first step should replace only the hand-authored fragment behavior, while keeping the Phase 2 browser WebGPU setup, mesh upload, camera, and metrics intact.
