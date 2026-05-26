@@ -130,6 +130,18 @@ npm run spike:naga
 
 The spike writes translated WGSL to `vendor/.cache/naga-materialx`, also ignored by git. Set `MXV_NAGA=/path/to/naga` to use another Naga binary.
 
+Browser-compile the generated Naga WGSL with Chrome/WebGPU:
+
+```sh
+npm run verify:naga-wgsl
+```
+
+The strict verifier currently reports the known pixel-stage uniformity blocker around `fwidth`. To keep the check useful while tracking that blocker:
+
+```sh
+npm run verify:naga-wgsl -- --allow-known-failures
+```
+
 ## Run
 
 Start the development server:
