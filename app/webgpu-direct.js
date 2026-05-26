@@ -22,8 +22,6 @@ const depthFormat = 'depth24plus';
 const queryParams = new URLSearchParams(document.location.search);
 const privateVertexFloatCount = 48;
 const privatePixelFloatCount = 28;
-const publicUniformPortCount = 39;
-const publicUniformFloatCount = publicUniformPortCount * 4;
 const lightDataFloatCount = 4;
 const materialXBoolUniformWarning = 'WGSL does not allow boolean types to be stored in uniform or storage address spaces.';
 const materialXKnownWarnings = new Set();
@@ -70,6 +68,90 @@ const materialPortIndex = {
   thinWalled: 38,
 };
 
+const materialPortTypes = {
+  base: 'float',
+  baseColor: 'color3',
+  diffuseRoughness: 'float',
+  metalness: 'float',
+  specular: 'float',
+  specularColor: 'color3',
+  specularRoughness: 'float',
+  specularIor: 'float',
+  specularAnisotropy: 'float',
+  specularRotation: 'float',
+  transmission: 'float',
+  transmissionColor: 'color3',
+  transmissionDepth: 'float',
+  transmissionScatter: 'color3',
+  transmissionScatterAnisotropy: 'float',
+  transmissionDispersion: 'float',
+  transmissionExtraRoughness: 'float',
+  subsurface: 'float',
+  subsurfaceColor: 'color3',
+  subsurfaceRadius: 'color3',
+  subsurfaceScale: 'float',
+  subsurfaceAnisotropy: 'float',
+  sheen: 'float',
+  sheenColor: 'color3',
+  sheenRoughness: 'float',
+  coat: 'float',
+  coatColor: 'color3',
+  coatRoughness: 'float',
+  coatAnisotropy: 'float',
+  coatRotation: 'float',
+  coatIor: 'float',
+  coatAffectColor: 'float',
+  coatAffectRoughness: 'float',
+  thinFilmThickness: 'float',
+  thinFilmIor: 'float',
+  emission: 'float',
+  emissionColor: 'color3',
+  opacity: 'color3',
+  thinWalled: 'integer',
+};
+
+const materialPortFields = {
+  base: 'base',
+  baseColor: 'base_color',
+  diffuseRoughness: 'diffuse_roughness',
+  metalness: 'metalness',
+  specular: 'specular',
+  specularColor: 'specular_color',
+  specularRoughness: 'specular_roughness',
+  specularIor: 'specular_IOR',
+  specularAnisotropy: 'specular_anisotropy',
+  specularRotation: 'specular_rotation',
+  transmission: 'transmission',
+  transmissionColor: 'transmission_color',
+  transmissionDepth: 'transmission_depth',
+  transmissionScatter: 'transmission_scatter',
+  transmissionScatterAnisotropy: 'transmission_scatter_anisotropy',
+  transmissionDispersion: 'transmission_dispersion',
+  transmissionExtraRoughness: 'transmission_extra_roughness',
+  subsurface: 'subsurface',
+  subsurfaceColor: 'subsurface_color',
+  subsurfaceRadius: 'subsurface_radius',
+  subsurfaceScale: 'subsurface_scale',
+  subsurfaceAnisotropy: 'subsurface_anisotropy',
+  sheen: 'sheen',
+  sheenColor: 'sheen_color',
+  sheenRoughness: 'sheen_roughness',
+  coat: 'coat',
+  coatColor: 'coat_color',
+  coatRoughness: 'coat_roughness',
+  coatAnisotropy: 'coat_anisotropy',
+  coatRotation: 'coat_rotation',
+  coatIor: 'coat_IOR',
+  coatAffectColor: 'coat_affect_color',
+  coatAffectRoughness: 'coat_affect_roughness',
+  thinFilmThickness: 'thin_film_thickness',
+  thinFilmIor: 'thin_film_IOR',
+  emission: 'emission',
+  emissionColor: 'emission_color',
+  opacity: 'opacity',
+  thinWalled: 'thin_walled',
+};
+
 const materialVariableAliases = {
   base_color: 'baseColor',
   coat_IOR: 'coatIor',
@@ -102,6 +184,11 @@ const materialVariableAliases = {
   transmission_scatter: 'transmissionScatter',
   transmission_scatter_anisotropy: 'transmissionScatterAnisotropy',
 };
+
+const materialUniformLayout = createMaterialUniformLayout();
+const publicUniformByteLength = materialUniformLayout.byteLength;
+const publicUniformStructSource = createPublicUniformStructSource();
+const materialAccessorSource = createMaterialAccessorSource();
 
 const baseMaterialPorts = {
   base: 1,
@@ -201,9 +288,7 @@ struct PrivateUniformsPixel {
   u_lightDirection: vec4<f32>,
 };
 
-struct PublicUniformsPixel {
-  ports: array<vec4<f32>, 39>,
-};
+${publicUniformStructSource}
 
 struct LightDataPixel {
   slots: array<vec4<f32>, 1>,
@@ -246,13 +331,7 @@ fn saturate(value: f32) -> f32 {
   return clamp(value, 0.0, 1.0);
 }
 
-fn materialFloat(index: u32) -> f32 {
-  return u_public.ports[index].x;
-}
-
-fn materialColor(index: u32) -> vec3<f32> {
-  return u_public.ports[index].xyz;
-}
+${materialAccessorSource}
 
 fn iorToF0(ior: f32) -> f32 {
   let ratio = (ior - 1.0) / (ior + 1.0);
@@ -369,6 +448,108 @@ function setStatus(text) {
 
 function setMetric(name, value) {
   setText(`[data-metric="${name}"]`, value);
+}
+
+function alignTo(value, alignment) {
+  return Math.ceil(value / alignment) * alignment;
+}
+
+function getUniformTypeLayout(type) {
+  if (type === 'color3' || type === 'vector3') {
+    return {
+      align: 16,
+      size: 12,
+      wgsl: 'vec3<f32>',
+    };
+  }
+
+  if (type === 'integer') {
+    return {
+      align: 4,
+      size: 4,
+      wgsl: 'i32',
+    };
+  }
+
+  return {
+    align: 4,
+    size: 4,
+    wgsl: 'f32',
+  };
+}
+
+function createMaterialUniformLayout() {
+  const ports = Object.entries(materialPortIndex)
+    .sort((a, b) => a[1] - b[1])
+    .map(([name, index]) => {
+      const type = materialPortTypes[name];
+      const field = materialPortFields[name];
+      if (!type || !field) {
+        throw new Error(`Missing MaterialX public uniform metadata for "${name}".`);
+      }
+      return {
+        field,
+        index,
+        name,
+        type,
+      };
+    });
+  let offset = 0;
+  const byName = {};
+
+  for (const port of ports) {
+    const layout = getUniformTypeLayout(port.type);
+    offset = alignTo(offset, layout.align);
+    Object.assign(port, {
+      byteOffset: offset,
+      wgsl: layout.wgsl,
+    });
+    byName[port.name] = port;
+    offset += layout.size;
+  }
+
+  return {
+    byName,
+    byteLength: alignTo(offset, 16),
+    ports,
+  };
+}
+
+function createPublicUniformStructSource() {
+  const fields = materialUniformLayout.ports
+    .map(port => `  ${port.field}: ${port.wgsl},`)
+    .join('\n');
+  return `struct PublicUniformsPixel {\n${fields}\n};`;
+}
+
+function createMaterialAccessorSource() {
+  const floatCases = materialUniformLayout.ports
+    .filter(port => port.type !== 'color3' && port.type !== 'vector3')
+    .map((port) => {
+      const value = port.type === 'integer'
+        ? `f32(u_public.${port.field})`
+        : `u_public.${port.field}`;
+      return `    case ${port.index}u: { return ${value}; }`;
+    })
+    .join('\n');
+  const colorCases = materialUniformLayout.ports
+    .filter(port => port.type === 'color3' || port.type === 'vector3')
+    .map(port => `    case ${port.index}u: { return u_public.${port.field}; }`)
+    .join('\n');
+
+  return `fn materialFloat(index: u32) -> f32 {
+  switch index {
+${floatCases}
+    default: { return 0.0; }
+  }
+}
+
+fn materialColor(index: u32) -> vec3<f32> {
+  switch index {
+${colorCases}
+    default: { return vec3<f32>(materialFloat(index)); }
+  }
+}`;
 }
 
 function clonePorts(ports) {
@@ -534,6 +715,31 @@ function getBlockPorts(block) {
   return ports;
 }
 
+function validateGeneratedPublicUniforms(generatedPorts, sampleId) {
+  const expected = materialUniformLayout.ports;
+  if (generatedPorts.length !== expected.length) {
+    throw new Error(`Generated public uniform count changed for "${sampleId}": expected ${expected.length}, got ${generatedPorts.length}.`);
+  }
+
+  const mismatches = [];
+  for (const expectedPort of expected) {
+    const generatedPort = generatedPorts[expectedPort.index];
+    const generatedName = normalizeMaterialVariableName(generatedPort?.variable);
+    if (generatedName !== expectedPort.name) {
+      mismatches.push(`${expectedPort.index}: expected ${expectedPort.name}, got ${generatedPort?.variable || '<missing>'}`);
+      continue;
+    }
+
+    if (generatedPort.type !== expectedPort.type) {
+      mismatches.push(`${expectedPort.name}: expected ${expectedPort.type}, got ${generatedPort.type || '<unknown>'}`);
+    }
+  }
+
+  if (mismatches.length) {
+    throw new Error(`Generated public uniform block no longer matches the bridge layout for "${sampleId}": ${mismatches.join('; ')}.`);
+  }
+}
+
 async function generateMaterialSample(mx, sampleId) {
   if (!mx.WgslShaderGenerator) {
     throw new Error('MaterialX runtime does not expose WgslShaderGenerator.');
@@ -560,6 +766,7 @@ async function generateMaterialSample(mx, sampleId) {
   const publicUniforms = pixelStage.getUniformBlocks().PublicUniforms;
   const ports = clonePorts(fallback.ports);
   const generatedPorts = getBlockPorts(publicUniforms);
+  validateGeneratedPublicUniforms(generatedPorts, sampleId);
 
   for (const port of generatedPorts) {
     const name = normalizeMaterialVariableName(port.variable);
@@ -602,7 +809,7 @@ async function initializeMaterialXShaderSupport(materialControl, pipelineControl
     const activeSample = materialSamples[activeMaterialId] || generatedEntries[0]?.[1];
     recordDuration('shaderGeneration', shaderStart);
     setMetric('shaderTarget', activeSample?.target || '-');
-    setMetric('shaderContract', activeSample ? `${activeSample.uniformCount} public ports` : '-');
+    setMetric('shaderContract', activeSample ? `${activeSample.uniformCount} public ports / ${publicUniformByteLength} B` : '-');
     setMetric('shaderSource', activeSample ? `${activeSample.vertexLines}v / ${activeSample.pixelLines}p lines` : '-');
     setMetric('shaderNotes', materialXKnownWarnings.size ? 'bool uniform mapped' : 'none');
     materialControl.refreshOptions();
@@ -1113,21 +1320,32 @@ function writeFrameUniforms(privateVertexData, privatePixelData, dimensions) {
   privatePixelData.set([0.45, -0.8, -0.35, 0], 24);
 }
 
+function createMaterialUniformData() {
+  const buffer = new ArrayBuffer(publicUniformByteLength);
+  return {
+    bytes: new Uint8Array(buffer),
+    floats: new Float32Array(buffer),
+    ints: new Int32Array(buffer),
+  };
+}
+
 function writeMaterialUniforms(publicUniformData, materialId) {
   const sample = materialSamples[materialId] || materialSamples.standard;
-  publicUniformData.fill(0);
+  publicUniformData.bytes.fill(0);
 
   for (const [name, value] of Object.entries(sample.ports)) {
-    const portIndex = materialPortIndex[name];
-    if (portIndex === undefined) continue;
+    const port = materialUniformLayout.byName[name];
+    if (!port) continue;
 
-    const offset = portIndex * 4;
+    const offset = port.byteOffset / Float32Array.BYTES_PER_ELEMENT;
     if (Array.isArray(value)) {
-      publicUniformData.set(value, offset);
+      publicUniformData.floats.set(value, offset);
+    } else if (port.type === 'integer') {
+      publicUniformData.ints[offset] = value ? 1 : 0;
     } else if (typeof value === 'boolean') {
-      publicUniformData[offset] = value ? 1 : 0;
+      publicUniformData.floats[offset] = value ? 1 : 0;
     } else {
-      publicUniformData[offset] = value;
+      publicUniformData.floats[offset] = value;
     }
   }
 
@@ -1158,7 +1376,7 @@ function bindMaterialSelect(device, publicUniformBuffer, publicUniformData) {
     const uploadStart = performance.now();
     activeMaterialId = materialId;
     const sample = writeMaterialUniforms(publicUniformData, activeMaterialId);
-    device.queue.writeBuffer(publicUniformBuffer, 0, publicUniformData);
+    device.queue.writeBuffer(publicUniformBuffer, 0, publicUniformData.bytes);
     setMetric('materialUpload', formatDuration(performance.now() - uploadStart));
     setMetric('material', `${sample.label} (${sample.source})`);
 
@@ -1315,11 +1533,11 @@ async function main() {
 
   const privateVertexData = new Float32Array(privateVertexFloatCount);
   const privatePixelData = new Float32Array(privatePixelFloatCount);
-  const publicUniformData = new Float32Array(publicUniformFloatCount);
+  const publicUniformData = createMaterialUniformData();
   const lightData = new Float32Array(lightDataFloatCount);
   const privateVertexBuffer = createUniformBuffer(device, 'MaterialX PrivateUniforms vertex', privateVertexData);
   const privatePixelBuffer = createUniformBuffer(device, 'MaterialX PrivateUniforms pixel', privatePixelData);
-  const publicUniformBuffer = createUniformBuffer(device, 'MaterialX PublicUniforms pixel port table', publicUniformData);
+  const publicUniformBuffer = createUniformBuffer(device, 'MaterialX PublicUniforms pixel port table', publicUniformData.bytes);
   const lightDataBuffer = createUniformBuffer(device, 'MaterialX LightData pixel placeholder', lightData);
   const envRadianceTexture = createPlaceholderTexture(device, 'MaterialX env radiance placeholder', [0.32, 0.36, 0.42, 1]);
   const envIrradianceTexture = createPlaceholderTexture(device, 'MaterialX env irradiance placeholder', [0.62, 0.66, 0.68, 1]);

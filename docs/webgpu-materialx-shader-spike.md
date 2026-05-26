@@ -290,6 +290,8 @@ The direct page now loads the MaterialX runtime and runs `WgslShaderGenerator` f
 
 The generated vertex stage is now consumed through a narrow adapter. The direct page validates the expected MaterialX vertex contract from the generated Vulkan-style GLSL source, then rebuilds the browser WebGPU pipeline with an equivalent WGSL vertex entry point. This keeps the generated attribute, uniform, transform, and varying contract live without starting a general shader translator.
 
+The public material uniform buffer now follows the generated `PublicUniforms_pixel` member order and std140-style alignment instead of the first bridge's padded `array<vec4, 39>` table. The direct page validates the generated 39-port block before using shadergen values, packs scalar, `vec3`, and integer fields into a 288-byte buffer, and exposes named WGSL fields that mirror the MaterialX port names. This gets the fragment bridge closer to the shape a translated generated pixel shader would expect.
+
 MaterialX emits a known warning for the `standard_surface.thin_walled` boolean port because WGSL does not allow booleans in uniform/storage address spaces. The direct page filters that specific Emscripten `printErr` message and surfaces it as `Shader Notes: bool uniform mapped`; unknown MaterialX stderr output is still forwarded to the console.
 
 This is not yet a direct translation of the generated `wgsl-complete.pixel.glsl` output. Instead, it is a browser-WGSL bridge that keeps the generated binding numbers, vertex-stage semantics, and public-uniform semantic order while using a compact hand-authored standard-surface approximation for the fragment stage. That gives the spike a real WebGPU resource contract to measure before investing in a broader shader translator.
