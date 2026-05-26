@@ -178,14 +178,15 @@ http://127.0.0.1:8000/webgpu.html
 http://127.0.0.1:8000/webgpu-direct.html
 ```
 
-The direct WebGPU page loads the MaterialX shaderball and the `San Giuseppe Bridge Split` HDR environment by default. In Naga mode, the radiance texture is uploaded with a generated mip chain so MaterialX `u_envRadianceMips` lookups can exercise rough and anisotropic environment sampling. It also accepts `material`, `shader`, `envSamples`, `envIntensity`, and `environment` query params for focused shader-bridge checks:
+The direct WebGPU page loads the MaterialX shaderball and the `San Giuseppe Bridge Split` HDR environment by default. It defaults to the Naga-translated generated MaterialX shader path, with `shader=bridge` still available for contract diagnostics. The radiance texture is uploaded with a generated mip chain so MaterialX `u_envRadianceMips` lookups can exercise rough and anisotropic environment sampling. It also accepts `material`, `shader`, `envSamples`, `envIntensity`, and `environment` query params for focused shader checks:
 
 ```text
 http://127.0.0.1:8000/webgpu-direct.html?material=pearl
-http://127.0.0.1:8000/webgpu-direct.html?material=standard&shader=naga
-http://127.0.0.1:8000/webgpu-direct.html?material=brushedMetal&shader=naga&envSamples=4&envIntensity=1
-http://127.0.0.1:8000/webgpu-direct.html?material=carPaint&shader=naga&envSamples=16&envIntensity=1
-http://127.0.0.1:8000/webgpu-direct.html?material=carPaint&shader=naga&drawEnvironment=1
+http://127.0.0.1:8000/webgpu-direct.html?material=standard&shader=bridge
+http://127.0.0.1:8000/webgpu-direct.html?material=brushedMetal&envSamples=4&envIntensity=1
+http://127.0.0.1:8000/webgpu-direct.html?material=carPaint&envSamples=16&envIntensity=1
+http://127.0.0.1:8000/webgpu-direct.html?material=brassTiled&envSamples=16&envIntensity=1
+http://127.0.0.1:8000/webgpu-direct.html?material=carPaint&drawEnvironment=1
 http://127.0.0.1:8000/webgpu-direct.html?material=brushedMetal&environment=vendor/MaterialX/resources/Lights/table_mountain_split.hdr
 ```
 

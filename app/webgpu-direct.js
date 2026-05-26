@@ -1,7 +1,8 @@
 // This import+export makes sure webgpu-direct.html is copied to dist and the
 // import is not stripped out during bundling.
 import index from './webgpu-direct.html';
-import { Box3, Vector3 } from 'three';
+import { Box3, Matrix4, PerspectiveCamera, Vector3 } from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { translateMaterialXFragmentGlsl } from '../src/materialx-glsl-translator.js';
@@ -17,11 +18,12 @@ const defaultLightRig = 'vendor/MaterialX/resources/Lights/san_giuseppe_bridge_s
 const runtimeBaseUrl = new URL('./vendor/materialx-runtime/', import.meta.url);
 const nagaShaderBaseUrl = new URL('./vendor/naga-materialx/', import.meta.url);
 const appStartTime = performance.now();
-const cameraFov = 60 * Math.PI / 180;
+const cameraFovDegrees = 60;
+const cameraFov = cameraFovDegrees * Math.PI / 180;
 const cameraNear = 0.05;
 const cameraFar = 100;
 const sphereRadius = 0.8;
-const initialDistance = sphereRadius * 2;
+const initialDistance = sphereRadius * 3.2;
 const maxPixelRatio = 2;
 const depthFormat = 'depth24plus';
 const queryParams = new URLSearchParams(document.location.search);
@@ -30,7 +32,7 @@ const shaderModeLabels = {
   naga: 'Naga WGSL',
 };
 const requestedShaderMode = queryParams.get('shader') || queryParams.get('shaderMode');
-let activeShaderMode = Object.hasOwn(shaderModeLabels, requestedShaderMode) ? requestedShaderMode : 'bridge';
+let activeShaderMode = Object.hasOwn(shaderModeLabels, requestedShaderMode) ? requestedShaderMode : 'naga';
 const defaultEnvRadianceSamples = Number(queryParams.get('envSamples') || queryParams.get('samples') || 4);
 const defaultEnvLightIntensity = Number(queryParams.get('envIntensity') || 1);
 const defaultDrawEnvironment = parseBooleanQueryParam(
@@ -457,6 +459,19 @@ const fallbackMaterialSamples = {
       specularRoughness: 0.32,
     },
   },
+  brassTiled: {
+    label: 'Tiled Brass',
+    ports: {
+      ...baseMaterialPorts,
+      baseColor: [1, 1, 1],
+      coat: 1,
+      coatColor: [0.85, 0.64, 0.36],
+      coatRoughness: 0.2,
+      metalness: 1,
+      specular: 0,
+      specularRoughness: 0.2,
+    },
+  },
 };
 let materialSamples = createFallbackMaterialSamples();
 const requestedMaterial = queryParams.get('material');
@@ -600,15 +615,6 @@ fn fragmentMain(input: BackgroundVertexOutput) -> @location(0) vec4<f32> {
   return vec4<f32>(mx_srgb_encode(max(color, vec3<f32>(0.0))), 1.0);
 }
 `;
-
-const viewState = {
-  distance: initialDistance,
-  isDragging: false,
-  lastX: 0,
-  lastY: 0,
-  pitch: 0.12,
-  yaw: 0.22,
-};
 
 function setText(selector, text) {
   const node = document.querySelector(selector);
@@ -1723,21 +1729,6 @@ function createIdentityMatrix() {
   ]);
 }
 
-function perspective(out, fovy, aspect, near, far) {
-  const f = 1 / Math.tan(fovy / 2);
-  out.fill(0);
-  out[0] = f / aspect;
-  out[5] = f;
-  out[10] = far / (near - far);
-  out[11] = -1;
-  out[14] = far * near / (near - far);
-  return out;
-}
-
-function subtract(a, b) {
-  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-}
-
 function cross(a, b) {
   return [
     a[1] * b[2] - a[2] * b[1],
@@ -1746,52 +1737,9 @@ function cross(a, b) {
   ];
 }
 
-function dot(a, b) {
-  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-
 function normalize(value) {
   const length = Math.hypot(value[0], value[1], value[2]) || 1;
   return [value[0] / length, value[1] / length, value[2] / length];
-}
-
-function lookAt(out, eye, target, up) {
-  const z = normalize(subtract(eye, target));
-  const x = normalize(cross(up, z));
-  const y = cross(z, x);
-
-  out[0] = x[0];
-  out[1] = y[0];
-  out[2] = z[0];
-  out[3] = 0;
-  out[4] = x[1];
-  out[5] = y[1];
-  out[6] = z[1];
-  out[7] = 0;
-  out[8] = x[2];
-  out[9] = y[2];
-  out[10] = z[2];
-  out[11] = 0;
-  out[12] = -dot(x, eye);
-  out[13] = -dot(y, eye);
-  out[14] = -dot(z, eye);
-  out[15] = 1;
-  return out;
-}
-
-function multiplyMatrices(out, a, b) {
-  const result = new Float32Array(16);
-  for (let column = 0; column < 4; column++) {
-    for (let row = 0; row < 4; row++) {
-      const value = a[0 * 4 + row] * b[column * 4 + 0]
-        + a[1 * 4 + row] * b[column * 4 + 1]
-        + a[2 * 4 + row] * b[column * 4 + 2]
-        + a[3 * 4 + row] * b[column * 4 + 3];
-      result[column * 4 + row] = value;
-    }
-  }
-  out.set(result);
-  return out;
 }
 
 function createSphereGeometry(radius = sphereRadius, widthSegments = 96, heightSegments = 48) {
@@ -2511,60 +2459,63 @@ fn validateFragmentTranslation() {
   }
 }
 
-function bindCanvasControls(canvas) {
-  canvas.addEventListener('pointerdown', (event) => {
-    viewState.isDragging = true;
-    viewState.lastX = event.clientX;
-    viewState.lastY = event.clientY;
-    canvas.setPointerCapture(event.pointerId);
-  });
-
-  canvas.addEventListener('pointermove', (event) => {
-    if (!viewState.isDragging) return;
-    const dx = event.clientX - viewState.lastX;
-    const dy = event.clientY - viewState.lastY;
-    viewState.lastX = event.clientX;
-    viewState.lastY = event.clientY;
-    viewState.yaw -= dx * 0.008;
-    viewState.pitch = Math.max(-1.2, Math.min(1.2, viewState.pitch + dy * 0.008));
-  });
-
-  canvas.addEventListener('pointerup', (event) => {
-    viewState.isDragging = false;
-    canvas.releasePointerCapture(event.pointerId);
-  });
-
-  canvas.addEventListener('wheel', (event) => {
-    event.preventDefault();
-    const scale = Math.exp(event.deltaY * 0.0012);
-    viewState.distance = Math.max(0.95, Math.min(8, viewState.distance * scale));
-  }, { passive: false });
-}
-
-function getCameraPosition() {
-  const cosPitch = Math.cos(viewState.pitch);
-  return [
-    Math.sin(viewState.yaw) * cosPitch * viewState.distance,
-    Math.sin(viewState.pitch) * viewState.distance,
-    Math.cos(viewState.yaw) * cosPitch * viewState.distance,
-  ];
-}
-
-function writeFrameUniforms(privateVertexData, privatePixelData, dimensions, envRadianceMipCount = 1) {
+function createCameraRig(canvas, dimensions) {
   const aspect = dimensions.width / dimensions.height;
-  const projection = new Float32Array(16);
-  const view = new Float32Array(16);
+  const camera = new PerspectiveCamera(cameraFovDegrees, aspect, cameraNear, cameraFar);
+  const yaw = 0.22;
+  const pitch = 0.12;
+  const cosPitch = Math.cos(pitch);
+  camera.position.set(
+    Math.sin(yaw) * cosPitch * initialDistance,
+    Math.sin(pitch) * initialDistance,
+    Math.cos(yaw) * cosPitch * initialDistance,
+  );
+  camera.up.set(0, 1, 0);
+  camera.lookAt(0, 0, 0);
+  camera.updateMatrixWorld(true);
+
+  const controls = new OrbitControls(camera, canvas);
+  controls.target.set(0, 0, 0);
+  controls.enableDamping = false;
+  controls.enablePan = true;
+  controls.minDistance = sphereRadius * 1.25;
+  controls.maxDistance = 8;
+  controls.rotateSpeed = 1;
+  controls.zoomSpeed = 1;
+  controls.panSpeed = 1;
+  controls.update();
+
+  return {
+    camera,
+    controls,
+    viewProjection: new Matrix4(),
+  };
+}
+
+function updateCameraRig(cameraRig, dimensions) {
+  const aspect = dimensions.width / dimensions.height;
+  cameraRig.camera.aspect = aspect;
+  cameraRig.camera.updateProjectionMatrix();
+  cameraRig.controls.update();
+  cameraRig.camera.updateMatrixWorld(true);
+  cameraRig.viewProjection.multiplyMatrices(
+    cameraRig.camera.projectionMatrix,
+    cameraRig.camera.matrixWorldInverse,
+  );
+}
+
+function getCameraPosition(cameraRig) {
+  return cameraRig.camera.position.toArray();
+}
+
+function writeFrameUniforms(privateVertexData, privatePixelData, dimensions, cameraRig, envRadianceMipCount = 1) {
   const model = createIdentityMatrix();
   const normal = createIdentityMatrix();
-  const viewProjection = new Float32Array(16);
-  const cameraPosition = getCameraPosition();
-
-  perspective(projection, cameraFov, aspect, cameraNear, cameraFar);
-  lookAt(view, cameraPosition, [0, 0, 0], [0, 1, 0]);
-  multiplyMatrices(viewProjection, projection, view);
+  updateCameraRig(cameraRig, dimensions);
+  const cameraPosition = getCameraPosition(cameraRig);
 
   privateVertexData.set(model, 0);
-  privateVertexData.set(viewProjection, 16);
+  privateVertexData.set(cameraRig.viewProjection.elements, 16);
   privateVertexData.set(normal, 32);
 
   privatePixelData.bytes.fill(0);
@@ -2582,12 +2533,12 @@ function writeFrameUniforms(privateVertexData, privatePixelData, dimensions, env
   privatePixelData.ints[23] = directLightEnabled ? 1 : 0;
 }
 
-function writeEnvironmentBackgroundUniforms(backgroundData, dimensions) {
+function writeEnvironmentBackgroundUniforms(backgroundData, dimensions, cameraRig) {
   const aspect = dimensions.width / dimensions.height;
-  const cameraPosition = getCameraPosition();
-  const forward = normalize(cameraPosition.map(component => -component));
-  const right = normalize(cross(forward, [0, 1, 0]));
-  const up = cross(right, forward);
+  const elements = cameraRig.camera.matrixWorld.elements;
+  const right = [elements[0], elements[1], elements[2]];
+  const up = [elements[4], elements[5], elements[6]];
+  const forward = [-elements[8], -elements[9], -elements[10]];
 
   backgroundData.set([right[0], right[1], right[2], 0], 0);
   backgroundData.set([up[0], up[1], up[2], 0], 4);
@@ -2699,7 +2650,7 @@ function bindShaderModeSelect(onModeChanged) {
   };
 
   select.addEventListener('change', () => {
-    activeShaderMode = Object.hasOwn(shaderModeLabels, select.value) ? select.value : 'bridge';
+    activeShaderMode = Object.hasOwn(shaderModeLabels, select.value) ? select.value : 'naga';
     updateQueryParam('shader', activeShaderMode);
     const result = onModeChanged?.(activeShaderMode);
     if (result && typeof result.catch === 'function') {
@@ -3081,6 +3032,7 @@ async function main() {
   installWebGpuErrorReporting(device);
   const format = navigator.gpu.getPreferredCanvasFormat();
   let dimensions = configureCanvas(canvas, device, context, format);
+  const cameraRig = createCameraRig(canvas, dimensions);
   let depthTexture = createDepthTexture(device, dimensions);
   let bridgeShaderSource = shaderSource;
   let pipeline = await createPipeline(device, format);
@@ -3226,7 +3178,6 @@ async function main() {
     setStatus('Shadergen fallback active');
   });
 
-  bindCanvasControls(canvas);
   window.addEventListener('resize', () => {
     dimensions = configureCanvas(canvas, device, context, format);
     depthTexture.destroy();
@@ -3238,8 +3189,8 @@ async function main() {
   setStatus('Ready');
 
   function render(now) {
-    writeFrameUniforms(privateVertexData, privatePixelData, dimensions, environmentTextures.envRadianceMipCount);
-    writeEnvironmentBackgroundUniforms(environmentBackgroundData, dimensions);
+    writeFrameUniforms(privateVertexData, privatePixelData, dimensions, cameraRig, environmentTextures.envRadianceMipCount);
+    writeEnvironmentBackgroundUniforms(environmentBackgroundData, dimensions, cameraRig);
     device.queue.writeBuffer(privateVertexBuffer, 0, privateVertexData);
     device.queue.writeBuffer(privatePixelBuffer, 0, privatePixelData.bytes);
     device.queue.writeBuffer(environmentBackgroundBuffer, 0, environmentBackgroundData);

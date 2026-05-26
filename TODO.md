@@ -8,7 +8,7 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 
 - [ ] Continue the direct WebGPU MaterialX shader spike.
   - Status: in progress.
-  - Current shape: `/webgpu-direct.html` renders the MaterialX shaderball with a direct WebGPU pipeline, generated sample material values, generated vertex-stage contract validation, MaterialX-shaped public/private/light uniform bindings, HDR environment textures, non-environment texture bindings for the tiled-wood sample, and a Naga-translated generated WGSL pixel path.
+  - Current shape: `/webgpu-direct.html` renders the MaterialX shaderball with a direct WebGPU pipeline, Three.js orbit controls, generated sample material values, generated vertex-stage contract validation, MaterialX-shaped public/private/light uniform bindings, HDR environment textures, non-environment texture bindings for tiled wood and tiled brass, and a default Naga-translated generated WGSL pixel path.
   - Current recommendation: Naga-translated WebGPU is the primary direct viewer path; the hand-authored bridge remains a diagnostic scaffold, and WebGL remains the fallback for unsupported systems.
 
 ## Done
@@ -56,12 +56,15 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 - [x] Decide to prioritize Naga-translated WebGPU over growing the hand-authored bridge toward feature parity.
 - [x] Add a textured tiled-wood MaterialX sample that exercises UV attributes, image texture/sampler bindings, sample-specific public uniform layouts, and shifted light-data binding in the Naga path.
 - [x] Extend the Naga verifier and direct WebGPU verifier to accept sample-specific texture bindings, UV vertex layouts, and larger public uniform blocks.
+- [x] Add the upstream-style tiled-brass MaterialX sample as a second texture-backed coverage case for metallic coat and roughness textures.
+- [x] Make Naga the default shader path for `/webgpu-direct.html`, keeping `shader=bridge` as an explicit diagnostic mode.
+- [x] Replace the direct viewer's custom pointer controls with Three.js `OrbitControls` and pull the default shaderball framing farther back to better match the original viewer.
 
 ## In Progress
 
 - [ ] Phase 3 direct WebGPU bridge.
-  - Status: binding contract is active; generated fragment source is validated for the expected standard-surface shape; the browser WGSL fragment path now mirrors the generated outer `main()` to standard-surface call flow; a narrow custom translator compiles a first helper-function slice; Naga translates the full emitted shader fixtures offline; Chrome accepts the generated Naga vertex and pixel modules after the bool-uniform and subsurface-radius pre-passes; all eight translated samples compile as render pipelines with the direct WebGPU bind group layout; the direct viewer can now draw the shaderball through the Naga-generated WGSL path with display encoding, runtime environment sample controls, mipmapped HDR radiance lookups, generated-style directional light data, and texture/sampler bindings for tiled wood.
-  - Next decision: harden `shader=naga` as the primary WebGPU shader path and keep `shader=bridge` only for contract diagnostics.
+  - Status: binding contract is active; generated fragment source is validated for the expected standard-surface shape; the browser WGSL fragment path now mirrors the generated outer `main()` to standard-surface call flow; a narrow custom translator compiles a first helper-function slice; Naga translates the full emitted shader fixtures offline; Chrome accepts the generated Naga vertex and pixel modules after the bool-uniform and subsurface-radius pre-passes; all nine translated samples compile as render pipelines with the direct WebGPU bind group layout; the direct viewer now defaults to the Naga-generated WGSL path with display encoding, Three.js orbit controls, runtime environment sample controls, mipmapped HDR radiance lookups, generated-style directional light data, and texture/sampler bindings for tiled wood and tiled brass.
+  - Next decision: treat `shader=bridge` as a contract diagnostic path while WebGPU/Naga moves toward capability routing and parity testing.
 
 - [ ] Performance comparison against the WebGL viewer.
   - Status: direct page exposes first-frame, frame-time, FPS, material upload, switch-frame, switch-GPU, average, and p95 metrics.
@@ -69,32 +72,28 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 
 ## Next Tasks
 
-1. Make Naga the first-class direct viewer mode.
-   - Default `/webgpu-direct.html` to `shader=naga` when fixtures are available.
-   - Keep `shader=bridge` available as an explicit diagnostic fallback.
-   - Surface a clear status if Naga fixtures are missing and fall back to WebGL or bridge only by explicit routing.
-
-2. Add capability routing between WebGPU/Naga and WebGL.
+1. Add capability routing between WebGPU/Naga and WebGL.
    - Probe `navigator.gpu`, adapter/device creation, and known shader pipeline compilation.
    - Route supported systems to WebGPU/Naga.
    - Route unsupported or failing systems to the existing WebGL viewer.
+   - Surface a clear status if Naga fixtures are missing and fall back to WebGL or bridge only by explicit routing.
 
-3. Capture a small baseline matrix for the representative generated samples in the WebGL viewer and `/webgpu-direct.html`.
+2. Capture a small baseline matrix for the representative generated samples in the WebGL viewer and `/webgpu-direct.html`.
    - Include first visible frame, steady FPS, frame-time average/p95, material switch CPU time, and material switch GPU completion time.
 
-4. Continue visual/performance evaluation of the Naga path.
-   - Use car paint, brushed metal, pearl, coated fabric, and tiled wood as the main visual checks; keep emissive plastic as emission coverage, not a parity reference.
+3. Continue visual/performance evaluation of the Naga path.
+   - Use car paint, brushed metal, pearl, coated fabric, tiled wood, and tiled brass as the main visual checks; keep emissive plastic as emission coverage, not a parity reference.
    - Compare Naga against the desktop viewer with the same material, shaderball mesh, `san_giuseppe_bridge_split` environment/light rig, `envSamples=16`, `envIntensity=1`, `directLight=1`, matched environment-background visibility, and shadows disabled.
    - Re-run the same views with `directLight=0` to isolate image-based lighting from direct-light contribution.
    - Measure steady FPS for complex materials at `envSamples=4`, `8`, and `16`.
    - If it holds, keep the build-time Naga wrapper path first and consider a WASM wrapper later.
 
-5. Improve environment parity when visual comparison becomes important.
+4. Improve environment parity when visual comparison becomes important.
    - Continue from the loaded HDR radiance/irradiance textures and generated radiance mips toward viewer-equivalent environment prefiltering and intensity.
    - Keep this behind the performance/fidelity evaluation so it does not block shader-contract learning.
 
-6. Expand verification once the Naga path grows.
-   - Add assertions for private uniform contract text, shader notes, WebGPU validation errors, texture-load status, and optionally a simple screenshot pixel sanity check.
+5. Expand verification once the Naga path grows.
+   - Add assertions for private uniform contract text, shader notes, WebGPU validation errors, texture-load status, camera-control smoke coverage, and optionally a simple screenshot pixel sanity check.
 
 ## Parking Lot
 

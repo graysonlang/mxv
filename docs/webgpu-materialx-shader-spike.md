@@ -91,8 +91,8 @@ Use this as a periodic check, not as a blocker for the exploratory spike.
 | --- | --- | --- |
 | 1. Capture shader contract | Generate a simple material with ESSL and Wgsl outputs, list uniforms, textures, varyings, attributes, and resource bindings. | Done: initial contract captured for `standard` and `pearl`. |
 | 2. Build minimal WebGPU draw | Render a static mesh with a hand-authored WGSL shader and the same camera framing as the lab. | Done: `/webgpu-direct.html` proof draw added, now loading the MaterialX shaderball GLB with a generated sphere fallback. |
-| 3. Adapt one MaterialX sample | Translate representative generated shaders into browser WGSL and bind the required uniforms/textures. | Direction set: Naga-translated WGSL is the primary direct WebGPU path; the hand-authored bridge remains diagnostic only. The first non-environment texture sample now renders through Naga. |
-| 4. Add coverage samples | Exercise representative standard-surface feature families after the simple case works. | Done: direct page now covers standard, pearl, brushed metal, car paint, smoked glass, emissive plastic, and coated fabric sample values. |
+| 3. Adapt one MaterialX sample | Translate representative generated shaders into browser WGSL and bind the required uniforms/textures. | Direction set: Naga-translated WGSL is the default direct WebGPU path; the hand-authored bridge remains diagnostic only. Texture-backed wood and brass samples now render through Naga. |
+| 4. Add coverage samples | Exercise representative standard-surface feature families after the simple case works. | Done: direct page now covers standard, pearl, brushed metal, car paint, smoked glass, emissive plastic, coated fabric, tiled wood, and tiled brass sample values. |
 | 5. Measure against WebGL | Compare compile/setup time, steady FPS, frame stability, and interaction latency against the existing WebGL fallback. | Continue hardening Naga unless parity or reliability regresses materially. |
 | 6. Decide next step | Choose how to productize the path. | Current recommendation: WebGPU + Naga first, WebGL fallback for unsupported systems. |
 
@@ -108,9 +108,10 @@ Use a deliberately small ladder:
 6. Emissive plastic: exercise emission values alongside a conventional surface, but avoid using it as the main visual parity sample because the emission term can clamp presentation.
 7. Coated fabric: exercise diffuse roughness, sheen, and coat together.
 8. Tiled wood: exercise UV attributes, image texture/sampler bindings, texture color-space conversion, and texture-driven roughness.
+9. Tiled brass: exercise the same texture binding family on a metallic, coated surface with texture-driven coat color and roughness.
 
 Pearl is useful as a complexity probe, but it should not be the first shader brought up.
-Texture bindings are now represented by the tiled-wood sample because they add a new resource-binding family rather than only broadening public uniform coverage.
+Texture bindings are now represented by tiled wood and tiled brass because they add a new resource-binding family rather than only broadening public uniform coverage.
 
 ## Phase 1 Findings
 
@@ -226,7 +227,7 @@ Use the upstream desktop viewer as the reference point for environment-lighting 
 - `../mx/vendor/MaterialX/source/MaterialXView/RenderPipelineGL.cpp` only updates the prefiltered environment map when `LightHandler::getUsePrefilteredMap()` is true; otherwise the default path is the generated shader's filtered-importance-sampling environment path.
 - The same desktop prefilter path binds the source radiance map with periodic U addressing, clamped V addressing, and linear filtering. The direct WebGPU path mirrors this for lat-long environment sampling with `addressModeU: "repeat"`, `addressModeV: "clamp-to-edge"`, and linear mip filtering.
 
-For this spike, `shader=naga&envSamples=16&envIntensity=1` is the closest direct-viewer setting to the desktop default. The current browser path still uses a simple CPU-generated radiance mip chain, not the desktop viewer's full prefiltering pipeline.
+For this spike, `envSamples=16&envIntensity=1` on the default Naga path is the closest direct-viewer setting to the desktop default. The current browser path still uses a simple CPU-generated radiance mip chain, not the desktop viewer's full prefiltering pipeline.
 
 For apples-to-apples visual checks against the desktop viewer, keep these settings aligned first:
 
@@ -242,7 +243,7 @@ For apples-to-apples visual checks against the desktop viewer, keep these settin
 The direct WebGPU parity URL is:
 
 ```text
-http://127.0.0.1:8000/webgpu-direct.html?material=carPaint&shader=naga&envSamples=16&envIntensity=1&directLight=1
+http://127.0.0.1:8000/webgpu-direct.html?material=carPaint&envSamples=16&envIntensity=1&directLight=1
 ```
 
 The desktop viewer comparison should use the same material, mesh, environment, light rig, direct-light setting, and `--shadowMap false` until the browser path has shadow maps.
@@ -328,7 +329,7 @@ The direct WebGPU proof now has a MaterialX-shaped binding harness:
 - `binding=6`: public standard-surface material values in the order reported by the MaterialX generator.
 - `binding=7`: generated-style light data block for the default directional light rig.
 
-The proof draw now uses the vendored MaterialX `shaderball.glb` by default. The loader applies mesh transforms, normalizes the model into the direct renderer's view volume, and packs position, normal, tangent, and UV data into one mesh stream. Naga pipelines choose the attribute layout required by each generated vertex shader, so untextured samples keep the original position/normal/tangent contract while textured samples bind UVs at the generated `i_texcoord_0` location. A custom geometry URL can be supplied with `geom=...` for local experiments.
+The proof draw now uses the vendored MaterialX `shaderball.glb` by default. The loader applies mesh transforms, normalizes the model into the direct renderer's view volume, and packs position, normal, tangent, and UV data into one mesh stream. The view uses Three.js `OrbitControls` so desktop and iPad gestures follow the same camera behavior as the original viewer, with a default fit that leaves more breathing room around the shaderball. Naga pipelines choose the attribute layout required by each generated vertex shader, so untextured samples keep the original position/normal/tangent contract while textured samples bind UVs at the generated `i_texcoord_0` location. A custom geometry URL can be supplied with `geom=...` for local experiments.
 
 The direct pipeline includes a `depth24plus` depth attachment and uses single-sided rasterization with `frontFace: "ccw"` and `cullMode: "back"`. The shaderball GLB and generated sphere fallback now both use winding that matches their outward normals, which gives this spike an efficient WebGPU-style draw path while still catching future asset or transform mistakes.
 
@@ -340,7 +341,7 @@ The direct page now loads the MaterialX runtime and runs `WgslShaderGenerator` f
 
 The generated vertex stage is now consumed through a narrow adapter. The direct page validates the expected MaterialX vertex contract from the generated Vulkan-style GLSL source, then rebuilds the browser WebGPU pipeline with an equivalent WGSL vertex entry point. This keeps the generated attribute, uniform, transform, and varying contract live without starting a general shader translator.
 
-The public material uniform buffer now follows the generated `PublicUniforms_pixel` member order and std140-style alignment instead of the first bridge's padded `array<vec4, 39>` table. Bridge-compatible samples still validate the generated 39-port block before using shadergen values, while Naga samples can use a sample-specific public layout; the tiled-wood sample currently uses 56 public fields in a 400-byte block. The private pixel buffer now mirrors the generated `PrivateUniforms_pixel` layout as well: environment matrix, environment intensity and sampling integers, refraction sidedness, view position, and active-light count. Filename private ports remain represented by texture/sampler bindings, while light data uses the binding emitted for the active sample.
+The public material uniform buffer now follows the generated `PublicUniforms_pixel` member order and std140-style alignment instead of the first bridge's padded `array<vec4, 39>` table. Bridge-compatible samples still validate the generated 39-port block before using shadergen values, while Naga samples can use a sample-specific public layout; the tiled texture samples currently use 55-56 public fields in a 400-byte block. The private pixel buffer now mirrors the generated `PrivateUniforms_pixel` layout as well: environment matrix, environment intensity and sampling integers, refraction sidedness, view position, and active-light count. Filename private ports remain represented by texture/sampler bindings, while light data uses the binding emitted for the active sample.
 
 The generated fragment source is also probed before the bridge reports shadergen as active. The direct page checks the expected fragment-stage declarations, validates the generated `NG_standard_surface_surfaceshader_100` function parameter order, and validates the generated `main()` call argument order. This still does not render the generated fragment source directly, but it locks down the next hand-port or tiny-translator target against the live MaterialX output.
 
@@ -364,28 +365,30 @@ This is not yet a direct translation of the generated `wgsl-complete.pixel.glsl`
 
 The spike includes a deliberately tiny generated GLSL-to-WGSL translator layer. It extracts selected leaf/helper functions from the Vulkan-style MaterialX pixel source, lowers their signatures and simple bodies into browser WGSL, and compile-checks that translated helper module in the WebGPU device. This path is now best treated as a narrow fallback or diagnostic tool rather than a planned full shader translator.
 
-Naga is now the preferred next translation probe. `npm run spike:naga` regenerates the cached MaterialX shader fixtures, applies a small bool-uniform pre-pass for MaterialX aliases such as `#define thin_walled bool(thin_walled)`, applies a narrow derivative-free fallback for the generated subsurface radius path that otherwise trips Chrome's `fwidth` uniformity analysis, and invokes `naga-cli` on every generated vertex and pixel shader. With `naga-cli v29.0.3`, all current samples convert successfully to WGSL: the untextured vertex stages are about 207 lines and full pixel stages are about 5033 lines with the registered directional-light path; `woodTiled` adds UV and image sampling code, producing about 214 vertex lines and 5405 pixel lines.
+Naga is now the preferred translation probe. `npm run spike:naga` regenerates the cached MaterialX shader fixtures, applies a small bool-uniform pre-pass for MaterialX aliases such as `#define thin_walled bool(thin_walled)`, applies a narrow derivative-free fallback for the generated subsurface radius path that otherwise trips Chrome's `fwidth` uniformity analysis, and invokes `naga-cli` on every generated vertex and pixel shader. With `naga-cli v29.0.3`, all current samples convert successfully to WGSL: the untextured vertex stages are about 207 lines and full pixel stages are about 5033 lines with the registered directional-light path; `woodTiled` and `brassTiled` add UV and image sampling code, producing about 214 vertex lines and roughly 5400 pixel lines.
 
-`npm run verify:naga-wgsl` browser-verifies those Naga WGSL outputs with Chrome/WebGPU. With the current pre-passes, all generated vertex and pixel modules compile as browser WGSL shader modules, the generated bindings and entry points match the direct WebGPU harness, and all eight translated samples compile as render pipelines with generated-layout-derived bind groups. The shader dump registers the default direct-light rig before generation, so the Naga fixtures include a real directional-light `sampleLightSource` path instead of the zero-light stub. The direct WebGPU page can now switch to those generated fixtures with `shader=naga`; this draws the shaderball with the translated vertex and pixel modules while reusing the direct page's mesh buffers, MaterialX-shaped uniform buffers, HDR environment textures, generated-style light data, and material image textures. The runtime path applies display encoding to the translated fragment output before presentation, exposes `envSamples` / `envIntensity` / `directLight` controls so expensive FIS-heavy materials can be measured at lower sample counts or in IBL-only mode, and supplies a mipmapped radiance texture so rough and anisotropic environment lookups are no longer forced through mip 0. The subsurface-radius pre-pass and simple CPU mip generation remain deliberate spike compromises, not claims that the translated shader is visually equivalent to the desktop viewer.
+`npm run verify:naga-wgsl` browser-verifies those Naga WGSL outputs with Chrome/WebGPU. With the current pre-passes, all generated vertex and pixel modules compile as browser WGSL shader modules, the generated bindings and entry points match the direct WebGPU harness, and all nine translated samples compile as render pipelines with generated-layout-derived bind groups. The shader dump registers the default direct-light rig before generation, so the Naga fixtures include a real directional-light `sampleLightSource` path instead of the zero-light stub. The direct WebGPU page defaults to those generated fixtures; `shader=bridge` remains available for the smaller diagnostic path. The Naga path draws the shaderball with the translated vertex and pixel modules while reusing the direct page's mesh buffers, MaterialX-shaped uniform buffers, HDR environment textures, generated-style light data, and material image textures. The runtime path applies display encoding to the translated fragment output before presentation, exposes `envSamples` / `envIntensity` / `directLight` controls so expensive FIS-heavy materials can be measured at lower sample counts or in IBL-only mode, and supplies a mipmapped radiance texture so rough and anisotropic environment lookups are no longer forced through mip 0. The subsurface-radius pre-pass and simple CPU mip generation remain deliberate spike compromises, not claims that the translated shader is visually equivalent to the desktop viewer.
 
-The first texture-backed sample is `woodTiled`, based on the upstream Standard Surface tiled-wood material. It adds two non-environment image resources, `wood_color.jpg` and `wood_roughness.jpg`, plus generated UV tiling controls. The generated contract shifts vertex attributes to position/UV/normal/tangent, adds texture/sampler bindings 7-10, and moves `LightData_pixel` to binding 11. The direct viewer now derives the Naga bind group from the active sample, uploads sample-specific public uniforms into a larger shared public buffer, and loads material images as repeat-sampled `rgba8unorm` WebGPU textures so MaterialX's generated color-space conversion remains responsible for the color texture decode.
+The first texture-backed samples are `woodTiled` and `brassTiled`, based on the upstream Standard Surface tiled materials. They add non-environment image resources for color and roughness, plus generated UV tiling controls. The generated contract shifts vertex attributes to position/UV/normal/tangent, adds texture/sampler bindings 7-10, and moves `LightData_pixel` to binding 11. The direct viewer now derives the Naga bind group from the active sample, uploads sample-specific public uniforms into a larger shared public buffer, and loads material images as repeat-sampled `rgba8unorm` WebGPU textures so MaterialX's generated color-space conversion remains responsible for the color texture decode.
 
 The direct page includes a material selector for the generated coverage sample values, and accepts the same state through the URL:
 
 ```text
 http://127.0.0.1:8000/webgpu-direct.html?material=standard
-http://127.0.0.1:8000/webgpu-direct.html?material=standard&shader=naga
-http://127.0.0.1:8000/webgpu-direct.html?material=brushedMetal&shader=naga&envSamples=4
-http://127.0.0.1:8000/webgpu-direct.html?material=carPaint&shader=naga&envSamples=16
-http://127.0.0.1:8000/webgpu-direct.html?material=carPaint&shader=naga&envSamples=16&directLight=1
-http://127.0.0.1:8000/webgpu-direct.html?material=carPaint&shader=naga&envSamples=16&directLight=0
-http://127.0.0.1:8000/webgpu-direct.html?material=carPaint&shader=naga&drawEnvironment=1
+http://127.0.0.1:8000/webgpu-direct.html?material=standard&shader=bridge
+http://127.0.0.1:8000/webgpu-direct.html?material=brushedMetal&envSamples=4
+http://127.0.0.1:8000/webgpu-direct.html?material=carPaint&envSamples=16
+http://127.0.0.1:8000/webgpu-direct.html?material=carPaint&envSamples=16&directLight=1
+http://127.0.0.1:8000/webgpu-direct.html?material=carPaint&envSamples=16&directLight=0
+http://127.0.0.1:8000/webgpu-direct.html?material=carPaint&drawEnvironment=1
 http://127.0.0.1:8000/webgpu-direct.html?material=pearl
 http://127.0.0.1:8000/webgpu-direct.html?material=brushedMetal
 http://127.0.0.1:8000/webgpu-direct.html?material=carPaint
 http://127.0.0.1:8000/webgpu-direct.html?material=smokedGlass
 http://127.0.0.1:8000/webgpu-direct.html?material=emissivePlastic
 http://127.0.0.1:8000/webgpu-direct.html?material=coatedFabric
+http://127.0.0.1:8000/webgpu-direct.html?material=woodTiled
+http://127.0.0.1:8000/webgpu-direct.html?material=brassTiled
 http://127.0.0.1:8000/webgpu-direct.html?material=pearl&environment=vendor/MaterialX/resources/Lights/table_mountain_split.hdr
 ```
 

@@ -25,7 +25,7 @@ const targetUrl = String(args.get('url') || process.env.MXV_VERIFY_URL || defaul
 const targetUrlSearchParams = new URL(targetUrl).searchParams;
 const expectedMaterial = String(args.get('expected-material') || process.env.MXV_VERIFY_EXPECTED_MATERIAL || 'Pearl (shadergen)');
 const expectedEnvironment = String(args.get('expected-environment') || process.env.MXV_VERIFY_EXPECTED_ENVIRONMENT || 'San Giuseppe Bridge Split');
-const expectedShader = String(args.get('expected-shader') || process.env.MXV_VERIFY_EXPECTED_SHADER || targetUrlSearchParams.get('shader') || 'bridge');
+const expectedShader = String(args.get('expected-shader') || process.env.MXV_VERIFY_EXPECTED_SHADER || targetUrlSearchParams.get('shader') || 'naga');
 const timeoutMs = Number(args.get('timeout') || process.env.MXV_VERIFY_TIMEOUT || 20_000);
 const headed = args.has('headed') || process.env.MXV_VERIFY_HEADFUL === '1';
 const screenshotPath = path.resolve(String(args.get('screenshot') || process.env.MXV_VERIFY_SCREENSHOT || defaultScreenshot));
