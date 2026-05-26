@@ -48,8 +48,10 @@ let drawEnvironment = defaultDrawEnvironment;
 let directLightEnabled = defaultDirectLightEnabled;
 const privateVertexFloatCount = 48;
 const privatePixelByteLength = 96;
+const maxPublicUniformByteLength = 4096;
 const environmentBackgroundFloatCount = 16;
 const lightDataByteLength = 48;
+const vertexStrideFloats = 11;
 let activeDirectLight = {
   color: [1, 0.894474, 0.567234],
   direction: [0.514434, -0.479014, -0.711269],
@@ -442,6 +444,19 @@ const fallbackMaterialSamples = {
       specularRoughness: 0.45,
     },
   },
+  woodTiled: {
+    label: 'Tiled Wood',
+    ports: {
+      ...baseMaterialPorts,
+      baseColor: [0.72, 0.48, 0.28],
+      coat: 0.1,
+      coatAnisotropy: 0.5,
+      coatRoughness: 0.2,
+      specular: 0.4,
+      specularAnisotropy: 0.5,
+      specularRoughness: 0.32,
+    },
+  },
 };
 let materialSamples = createFallbackMaterialSamples();
 const requestedMaterial = queryParams.get('material');
@@ -635,6 +650,14 @@ function parseBooleanQueryParam(value, fallback = false) {
 }
 
 function getUniformTypeLayout(type) {
+  if (type === 'vector2') {
+    return {
+      align: 8,
+      size: 8,
+      wgsl: 'vec2<f32>',
+    };
+  }
+
   if (type === 'color3' || type === 'vector3') {
     return {
       align: 16,
@@ -643,7 +666,7 @@ function getUniformTypeLayout(type) {
     };
   }
 
-  if (type === 'integer') {
+  if (type === 'integer' || type === 'string') {
     return {
       align: 4,
       size: 4,
@@ -689,6 +712,40 @@ function createMaterialUniformLayout() {
   }
 
   return {
+    byName,
+    byteLength: alignTo(offset, 16),
+    ports,
+  };
+}
+
+function createMaterialUniformLayoutFromPorts(generatedPorts) {
+  const ports = generatedPorts
+    .filter(port => port.type !== 'filename')
+    .map((port, index) => ({
+      field: port.variable,
+      index,
+      name: normalizeMaterialVariableName(port.variable),
+      sourceType: port.type,
+      type: port.type === 'string' ? 'integer' : port.type,
+    }));
+  let offset = 0;
+  const byName = {};
+  const byField = {};
+
+  for (const port of ports) {
+    const layout = getUniformTypeLayout(port.type);
+    offset = alignTo(offset, layout.align);
+    Object.assign(port, {
+      byteOffset: offset,
+      wgsl: layout.wgsl,
+    });
+    byName[port.name] = port;
+    byField[port.field] = port;
+    offset += layout.size;
+  }
+
+  return {
+    byField,
     byName,
     byteLength: alignTo(offset, 16),
     ports,
@@ -1143,12 +1200,54 @@ function parseMaterialValue(type, value) {
   if (normalized === 'true') return 1;
   if (normalized === 'false') return 0;
 
-  if (type === 'color3' || type === 'vector3') {
+  if (type === 'color3' || type === 'vector2' || type === 'vector3') {
     return normalized.split(',').map(component => Number(component.trim()));
   }
 
   const numeric = Number(normalized);
   return Number.isFinite(numeric) ? numeric : null;
+}
+
+function extractLightDataBinding(source) {
+  const match = /layout\s*\(\s*std140\s*,\s*binding\s*=\s*(\d+)\s*\)\s*uniform\s+LightData_pixel/.exec(source);
+  return match ? Number(match[1]) : 7;
+}
+
+function extractTextureBindings(source, generatedPorts) {
+  const filenamePorts = new Map(
+    generatedPorts
+      .filter(port => port.type === 'filename')
+      .map(port => [port.variable, port]),
+  );
+  const samplerBindings = new Map(
+    [...source.matchAll(/layout\s*\(\s*binding\s*=\s*(\d+)\s*\)\s*uniform\s+sampler\s+(\w+)_sampler\s*;/g)]
+      .map(match => [match[2], Number(match[1])]),
+  );
+
+  return [...source.matchAll(/layout\s*\(\s*binding\s*=\s*(\d+)\s*\)\s*uniform\s+texture2D\s+(\w+)_texture\s*;/g)]
+    .map((match) => {
+      const name = match[2];
+      const port = filenamePorts.get(name);
+      if (!port) return null;
+      return {
+        label: name.replace(/_file$/, '').replace(/_/g, ' '),
+        path: port.value || '',
+        samplerBinding: samplerBindings.get(name),
+        textureBinding: Number(match[1]),
+        variable: name,
+      };
+    })
+    .filter(binding => binding && Number.isFinite(binding.samplerBinding));
+}
+
+function createGeneratedUniformValues(generatedPorts) {
+  const values = {};
+  for (const port of generatedPorts) {
+    if (port.type === 'filename') continue;
+    const parsedValue = parseMaterialValue(port.type, port.value);
+    values[port.variable] = parsedValue ?? 0;
+  }
+  return values;
 }
 
 function getMaterialXVector(valueElement) {
@@ -1485,14 +1584,22 @@ async function generateMaterialSample(mx, sampleId, lightRigXml) {
   }
 
   const shader = generator.generate(element.getNamePath(), element, context);
+  const vertexSource = shader.getSourceCode('vertex');
+  const pixelSource = shader.getSourceCode('pixel');
   const pixelStage = shader.getStage('pixel');
   const uniformBlocks = pixelStage.getUniformBlocks();
   const publicUniforms = uniformBlocks.PublicUniforms;
   const privateUniforms = uniformBlocks.PrivateUniforms;
   const ports = clonePorts(fallback.ports);
   const generatedPorts = getBlockPorts(publicUniforms);
-  validateGeneratedPublicUniforms(generatedPorts, sampleId);
+  const textureBindings = extractTextureBindings(pixelSource, generatedPorts);
+  const bridgeCompatible = textureBindings.length === 0;
+  if (bridgeCompatible) {
+    validateGeneratedPublicUniforms(generatedPorts, sampleId);
+  }
   const privateUniformCount = validateGeneratedPrivateUniforms(getBlockPorts(privateUniforms), sampleId);
+  const uniformLayout = createMaterialUniformLayoutFromPorts(generatedPorts);
+  const uniformValues = createGeneratedUniformValues(generatedPorts);
 
   for (const port of generatedPorts) {
     const name = normalizeMaterialVariableName(port.variable);
@@ -1502,19 +1609,25 @@ async function generateMaterialSample(mx, sampleId, lightRigXml) {
     if (parsedValue !== null) ports[name] = parsedValue;
   }
 
-  const vertexSource = shader.getSourceCode('vertex');
-  const pixelSource = shader.getSourceCode('pixel');
-  const pixelContract = validateGeneratedPixelSource(pixelSource, sampleId);
+  const pixelContract = bridgeCompatible
+    ? validateGeneratedPixelSource(pixelSource, sampleId)
+    : null;
   return {
+    bridgeCompatible,
     label: fallback.label,
     lightData,
+    lightDataBinding: extractLightDataBinding(pixelSource),
     ports,
     renderable: element.getNamePath(),
     source: 'shadergen',
     target: typeof generator.getTarget === 'function' ? generator.getTarget() : 'unknown',
     pixelContract,
     privateUniformCount,
-    uniformCount: generatedPorts.length,
+    textureBindings,
+    uniformCount: uniformLayout.ports.length,
+    uniformLayout,
+    uniformValues,
+    usesTexcoord: /layout\s*\(\s*location\s*=\s*1\s*\)\s*in\s+vec2\s+i_texcoord_0/.test(vertexSource),
     vertexSource,
     vertexLines: vertexSource.split('\n').length,
     pixelLines: pixelSource.split('\n').length,
@@ -1547,11 +1660,11 @@ async function initializeMaterialXShaderSupport(materialControl, pipelineControl
     }
     recordDuration('shaderGeneration', shaderStart);
     setMetric('shaderTarget', activeSample?.target || '-');
-    setMetric('shaderContract', activeSample ? `${activeSample.uniformCount} public ports / ${publicUniformByteLength} B` : '-');
-    setMetric('contract', activeSample ? `bindings 0-7 / ${activeSample.privateUniformCount} private ports / ${privatePixelByteLength} B` : '-');
+    setMetric('shaderContract', activeSample ? `${activeSample.uniformCount} public ports / ${activeSample.uniformLayout?.byteLength || publicUniformByteLength} B` : '-');
+    setMetric('contract', activeSample ? describeBindingContract(activeSample) : '-');
     setMetric('shaderSource', activeSample ? `${activeSample.vertexLines}v / ${activeSample.pixelLines}p lines` : '-');
-    setMetric('fragmentAdapter', activeSample ? `${activeSample.pixelContract.portedHelperCount}/${activeSample.pixelContract.functionCount} funcs / ${activeSample.pixelContract.standardSurfaceParameterCount} params` : '-');
-    setMetric('fragmentTranslator', activeSample ? `${activeSample.pixelContract.translatedFragment.translatedCount} translated / ${activeSample.pixelContract.translatedFragment.requestedCount} requested` : '-');
+    setMetric('fragmentAdapter', activeSample?.pixelContract ? `${activeSample.pixelContract.portedHelperCount}/${activeSample.pixelContract.functionCount} funcs / ${activeSample.pixelContract.standardSurfaceParameterCount} params` : 'Naga-only texture graph');
+    setMetric('fragmentTranslator', activeSample?.pixelContract ? `${activeSample.pixelContract.translatedFragment.translatedCount} translated / ${activeSample.pixelContract.translatedFragment.requestedCount} requested` : 'Naga-only texture graph');
     setMetric('shaderNotes', materialXKnownWarnings.size ? 'bool uniform mapped' : 'none');
     materialControl.refreshOptions();
     materialControl.applyMaterial(activeMaterialId, { updateUrl: false });
@@ -1564,7 +1677,7 @@ async function initializeMaterialXShaderSupport(materialControl, pipelineControl
         setMetric('vertexAdapter', 'bridge fallback');
       }
     }
-    if (activeSample?.pixelContract.translatedFragment.wgsl && pipelineControl.validateGeneratedFragmentTranslation) {
+    if (activeSample?.pixelContract?.translatedFragment.wgsl && pipelineControl.validateGeneratedFragmentTranslation) {
       try {
         setStatus('Validating fragment translator');
         const validationDuration = await pipelineControl.validateGeneratedFragmentTranslation(activeSample.pixelContract.translatedFragment.wgsl);
@@ -1713,6 +1826,8 @@ function createSphereGeometry(radius = sphereRadius, widthSegments = 96, heightS
         tangent[0],
         tangent[1],
         tangent[2],
+        u,
+        v,
       );
     }
   }
@@ -1738,6 +1853,15 @@ function getAttributeVector3(attribute, index, fallback = [0, 0, 0]) {
     attribute.getX(index),
     attribute.getY(index),
     attribute.getZ(index),
+  ];
+}
+
+function getAttributeVector2(attribute, index, fallback = [0, 0]) {
+  if (!attribute) return fallback;
+
+  return [
+    attribute.getX(index),
+    attribute.getY(index),
   ];
 }
 
@@ -1797,8 +1921,9 @@ function packGeometries(geometries, label) {
     const position = geometry.attributes.position;
     const normal = geometry.attributes.normal;
     const tangent = geometry.attributes.tangent;
+    const uv = geometry.attributes.uv;
     const index = geometry.index;
-    const vertexOffset = vertices.length / 9;
+    const vertexOffset = vertices.length / vertexStrideFloats;
 
     for (let vertexIndex = 0; vertexIndex < position.count; vertexIndex++) {
       const rawPosition = getAttributeVector3(position, vertexIndex);
@@ -1806,6 +1931,7 @@ function packGeometries(geometries, label) {
       const rawTangent = tangent
         ? normalize(getAttributeVector3(tangent, vertexIndex, getFallbackTangent(rawNormal)))
         : getFallbackTangent(rawNormal);
+      const rawUv = getAttributeVector2(uv, vertexIndex);
 
       vertices.push(
         (rawPosition[0] - center.x) * scale,
@@ -1817,6 +1943,8 @@ function packGeometries(geometries, label) {
         rawTangent[0],
         rawTangent[1],
         rawTangent[2],
+        rawUv[0],
+        rawUv[1],
       );
     }
 
@@ -1910,6 +2038,56 @@ function createPlaceholderTexture(device, label, color) {
     { height: 1, width: 1 },
   );
   return texture;
+}
+
+async function loadImageTexture(device, url, label) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`${response.status} ${response.statusText}: ${url}`);
+  }
+
+  const blob = await response.blob();
+  const bitmap = await createImageBitmap(blob, { colorSpaceConversion: 'none' })
+    .catch(() => createImageBitmap(blob));
+  const texture = device.createTexture({
+    format: 'rgba8unorm',
+    label,
+    size: [bitmap.width, bitmap.height, 1],
+    usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+  });
+  device.queue.copyExternalImageToTexture(
+    { source: bitmap },
+    { texture },
+    { height: bitmap.height, width: bitmap.width },
+  );
+  bitmap.close?.();
+  return texture;
+}
+
+function createMaterialTextureCache(device) {
+  const textures = new Map();
+  const fallbackTexture = createPlaceholderTexture(device, 'MaterialX fallback image texture', [1, 0, 1, 1]);
+
+  return {
+    async get(url, label) {
+      if (!url) return fallbackTexture;
+      if (!textures.has(url)) {
+        textures.set(url, loadImageTexture(device, url, label).catch((error) => {
+          console.warn(`Could not load material texture ${url}.`, error);
+          return fallbackTexture;
+        }));
+      }
+      return textures.get(url);
+    },
+  };
+}
+
+async function loadMaterialTextureBindings(textureCache, sample) {
+  const bindings = sample?.textureBindings || [];
+  return Promise.all(bindings.map(async binding => ({
+    ...binding,
+    texture: await textureCache.get(binding.path, `MaterialX ${binding.label} texture`),
+  })));
 }
 
 function getEnvironmentIrradiancePath(environmentPath) {
@@ -2177,6 +2355,7 @@ async function createPipeline(device, format, options = {}) {
     label = 'Direct WebGPU proof shader',
     source = shaderSource,
     vertexEntryPoint = 'vertexMain',
+    vertexLayout = 'standard',
     vertexSource = source,
   } = options;
   device.pushErrorScope('validation');
@@ -2214,16 +2393,7 @@ async function createPipeline(device, format, options = {}) {
         topology: 'triangle-list',
       },
       vertex: {
-        buffers: [
-          {
-            arrayStride: 9 * Float32Array.BYTES_PER_ELEMENT,
-            attributes: [
-              { format: 'float32x3', offset: 0, shaderLocation: 0 },
-              { format: 'float32x3', offset: 3 * Float32Array.BYTES_PER_ELEMENT, shaderLocation: 1 },
-              { format: 'float32x3', offset: 6 * Float32Array.BYTES_PER_ELEMENT, shaderLocation: 2 },
-            ],
-          },
-        ],
+        buffers: [createVertexBufferLayout(vertexLayout)],
         entryPoint: vertexEntryPoint,
         module: vertexModule,
       },
@@ -2240,6 +2410,27 @@ async function createPipeline(device, format, options = {}) {
     recordWebGpuError('pipeline validation', reportedError);
     throw reportedError;
   }
+}
+
+function createVertexBufferLayout(layout = 'standard') {
+  const floatSize = Float32Array.BYTES_PER_ELEMENT;
+  const attributes = layout === 'textured'
+    ? [
+        { format: 'float32x3', offset: 0, shaderLocation: 0 },
+        { format: 'float32x2', offset: 9 * floatSize, shaderLocation: 1 },
+        { format: 'float32x3', offset: 3 * floatSize, shaderLocation: 2 },
+        { format: 'float32x3', offset: 6 * floatSize, shaderLocation: 3 },
+      ]
+    : [
+        { format: 'float32x3', offset: 0, shaderLocation: 0 },
+        { format: 'float32x3', offset: 3 * floatSize, shaderLocation: 1 },
+        { format: 'float32x3', offset: 6 * floatSize, shaderLocation: 2 },
+      ];
+
+  return {
+    arrayStride: vertexStrideFloats * floatSize,
+    attributes,
+  };
 }
 
 async function createEnvironmentBackgroundPipeline(device, format) {
@@ -2414,7 +2605,7 @@ function createPrivatePixelUniformData() {
 }
 
 function createMaterialUniformData() {
-  const buffer = new ArrayBuffer(publicUniformByteLength);
+  const buffer = new ArrayBuffer(maxPublicUniformByteLength);
   return {
     bytes: new Uint8Array(buffer),
     floats: new Float32Array(buffer),
@@ -2445,9 +2636,30 @@ function describeDirectLight(light = activeDirectLight) {
   return `on / type ${light.type || 0} / ${intensity}x`;
 }
 
-function writeMaterialUniforms(publicUniformData, materialId) {
+function writeMaterialUniforms(publicUniformData, materialId, options = {}) {
+  const shaderMode = options.shaderMode || activeShaderMode;
   const sample = materialSamples[materialId] || materialSamples.standard;
   publicUniformData.bytes.fill(0);
+
+  if (shaderMode === 'naga' && sample.uniformLayout && sample.uniformValues) {
+    if (sample.uniformLayout.byteLength > publicUniformData.bytes.byteLength) {
+      throw new Error(`Material uniform block for "${materialId}" needs ${sample.uniformLayout.byteLength} bytes, but only ${publicUniformData.bytes.byteLength} are allocated.`);
+    }
+
+    for (const port of sample.uniformLayout.ports) {
+      const value = sample.uniformValues[port.field];
+      const offset = port.byteOffset / Float32Array.BYTES_PER_ELEMENT;
+      if (Array.isArray(value)) {
+        publicUniformData.floats.set(value, offset);
+      } else if (port.type === 'integer') {
+        publicUniformData.ints[offset] = value ? Number(value) : 0;
+      } else {
+        publicUniformData.floats[offset] = Number.isFinite(Number(value)) ? Number(value) : 0;
+      }
+    }
+
+    return sample;
+  }
 
   for (const [name, value] of Object.entries(sample.ports)) {
     const port = materialUniformLayout.byName[name];
@@ -2599,6 +2811,10 @@ async function loadNagaShaderPair(materialId) {
 async function createNagaPipeline(device, format, materialId) {
   const loadStart = performance.now();
   const loaded = await loadNagaShaderPair(materialId);
+  const material = materialSamples[loaded.sampleId] || materialSamples.standard;
+  const vertexLayout = material?.usesTexcoord || /@location\(1\)\s+\w*texcoord/i.test(loaded.vertexSource)
+    ? 'textured'
+    : 'standard';
   setMetric('shaderSource', `Naga ${loaded.vertexLineCount}v / ${loaded.fragmentLineCount}p lines`);
 
   const pipeline = await createPipeline(device, format, {
@@ -2606,6 +2822,7 @@ async function createNagaPipeline(device, format, materialId) {
     fragmentSource: loaded.fragmentSource,
     label: `Direct WebGPU Naga ${loaded.sampleId} shader`,
     vertexEntryPoint: 'main',
+    vertexLayout,
     vertexSource: loaded.vertexSource,
   });
 
@@ -2617,12 +2834,26 @@ async function createNagaPipeline(device, format, materialId) {
   return pipeline;
 }
 
+function describeBindingContract(sample) {
+  const textureCount = sample.textureBindings?.length || 0;
+  const lightBinding = sample.lightDataBinding ?? 7;
+  const textureUpperBinding = textureCount
+    ? Math.max(...sample.textureBindings.flatMap(binding => [
+        binding.textureBinding,
+        binding.samplerBinding,
+      ]))
+    : 7;
+  const upperBinding = Math.max(lightBinding, textureUpperBinding);
+  const textureDetail = textureCount ? ` / ${textureCount} texture${textureCount === 1 ? '' : 's'}` : '';
+  return `bindings 0-${upperBinding}${textureDetail} / ${sample.privateUniformCount} private ports / ${privatePixelByteLength} B`;
+}
+
 function updateBridgeShaderMetrics(sample) {
-  if (!sample || sample.source !== 'shadergen') {
+  if (!sample || sample.source !== 'shadergen' || !sample.bridgeCompatible || !sample.pixelContract) {
     setMetric('shaderTarget', 'Wgsl bridge');
-    setMetric('shaderSource', 'bridge fallback');
-    setMetric('fragmentAdapter', 'bridge fallback');
-    setMetric('fragmentTranslator', 'bridge fallback');
+    setMetric('shaderSource', sample?.source === 'shadergen' ? `${sample.vertexLines}v / ${sample.pixelLines}p lines` : 'bridge fallback');
+    setMetric('fragmentAdapter', sample?.bridgeCompatible === false ? 'Naga-only texture graph' : 'bridge fallback');
+    setMetric('fragmentTranslator', sample?.bridgeCompatible === false ? 'Naga-only texture graph' : 'bridge fallback');
     return;
   }
 
@@ -2661,6 +2892,12 @@ function bindMaterialSelect(device, publicUniformBuffer, publicUniformData, opti
     device.queue.writeBuffer(publicUniformBuffer, 0, publicUniformData.bytes);
     setMetric('materialUpload', formatDuration(performance.now() - uploadStart));
     setMetric('material', `${sample.label} (${sample.source})`);
+    setMetric('shaderContract', sample.uniformLayout && activeShaderMode === 'naga'
+      ? `${sample.uniformCount} public ports / ${sample.uniformLayout.byteLength} B`
+      : `${materialUniformLayout.ports.length} public ports / ${publicUniformByteLength} B`);
+    setMetric('contract', sample.source === 'shadergen' && activeShaderMode === 'naga'
+      ? describeBindingContract(sample)
+      : `bindings 0-7 / ${privatePixelUniformPorts.length} private ports / ${privatePixelByteLength} B`);
     const callbackResult = onMaterialApplied?.(activeMaterialId, sample, options);
     if (callbackResult && typeof callbackResult.catch === 'function') {
       callbackResult.catch((error) => {
@@ -2757,6 +2994,21 @@ function createFpsMeter() {
 }
 
 function createDirectBindGroup(device, pipeline, resources) {
+  const shaderMode = resources.shaderMode || activeShaderMode;
+  const sample = resources.sample || materialSamples.standard;
+  const materialTextures = shaderMode === 'naga' ? resources.materialTextures || [] : [];
+  const lightDataBinding = shaderMode === 'naga' ? sample.lightDataBinding ?? 7 : 7;
+  const textureEntries = materialTextures.flatMap(binding => [
+    {
+      binding: binding.textureBinding,
+      resource: binding.texture.createView(),
+    },
+    {
+      binding: binding.samplerBinding,
+      resource: resources.materialSampler,
+    },
+  ]);
+
   return device.createBindGroup({
     entries: [
       {
@@ -2787,8 +3039,9 @@ function createDirectBindGroup(device, pipeline, resources) {
         binding: 6,
         resource: { buffer: resources.publicUniformBuffer },
       },
+      ...textureEntries,
       {
-        binding: 7,
+        binding: lightDataBinding,
         resource: { buffer: resources.lightDataBuffer },
       },
     ],
@@ -2860,6 +3113,14 @@ async function main() {
     minFilter: 'linear',
     mipmapFilter: 'linear',
   });
+  const materialSampler = device.createSampler({
+    addressModeU: 'repeat',
+    addressModeV: 'repeat',
+    magFilter: 'linear',
+    minFilter: 'linear',
+    mipmapFilter: 'linear',
+  });
+  const materialTextureCache = createMaterialTextureCache(device);
   device.queue.writeBuffer(lightDataBuffer, 0, lightData.bytes);
   setMetric('contract', `bindings 0-7 / private ${privatePixelByteLength} B`);
   const bindGroupResources = {
@@ -2867,11 +3128,28 @@ async function main() {
     environmentBackgroundBuffer,
     envSampler,
     lightDataBuffer,
+    materialSampler,
     privatePixelBuffer,
     privateVertexBuffer,
     publicUniformBuffer,
   };
-  let bindGroup = createDirectBindGroup(device, pipeline, bindGroupResources);
+  const createBindGroupForActiveMaterial = async (
+    targetPipeline = pipeline,
+    shaderMode = activeShaderMode,
+    materialId = activeMaterialId,
+  ) => {
+    const sample = materialSamples[materialId] || materialSamples.standard;
+    const materialTextures = shaderMode === 'naga'
+      ? await loadMaterialTextureBindings(materialTextureCache, sample)
+      : [];
+    return createDirectBindGroup(device, targetPipeline, {
+      ...bindGroupResources,
+      materialTextures,
+      sample,
+      shaderMode,
+    });
+  };
+  let bindGroup = await createBindGroupForActiveMaterial();
   const environmentBackgroundBindGroup = createEnvironmentBackgroundBindGroup(device, environmentBackgroundPipeline, bindGroupResources);
   let pipelineSwitchId = 0;
   bindEnvironmentControls();
@@ -2882,6 +3160,14 @@ async function main() {
     if (options.requireShadergen && material?.source !== 'shadergen') return;
 
     setStatus(activeShaderMode === 'naga' ? 'Loading Naga WGSL shader' : 'Loading bridge shader');
+    const sample = writeMaterialUniforms(publicUniformData, activeMaterialId, { shaderMode: activeShaderMode });
+    device.queue.writeBuffer(publicUniformBuffer, 0, publicUniformData.bytes);
+    setMetric('shaderContract', sample.uniformLayout && activeShaderMode === 'naga'
+      ? `${sample.uniformCount} public ports / ${sample.uniformLayout.byteLength} B`
+      : `${materialUniformLayout.ports.length} public ports / ${publicUniformByteLength} B`);
+    setMetric('contract', sample.source === 'shadergen' && activeShaderMode === 'naga'
+      ? describeBindingContract(sample)
+      : `bindings 0-7 / ${privatePixelUniformPorts.length} private ports / ${privatePixelByteLength} B`);
     let nextPipeline;
     if (activeShaderMode === 'naga') {
       nextPipeline = await createNagaPipeline(device, format, materialId);
@@ -2894,8 +3180,11 @@ async function main() {
     }
     if (switchId !== pipelineSwitchId) return;
 
+    const nextBindGroup = await createBindGroupForActiveMaterial(nextPipeline, activeShaderMode, activeMaterialId);
+    if (switchId !== pipelineSwitchId) return;
+
     pipeline = nextPipeline;
-    bindGroup = createDirectBindGroup(device, pipeline, bindGroupResources);
+    bindGroup = nextBindGroup;
     setStatus('Ready');
   };
   bindShaderModeSelect(() => applyPipelineForShaderMode(activeMaterialId, { requireShadergen: activeShaderMode === 'naga' }));
@@ -2915,11 +3204,13 @@ async function main() {
       const adapterDuration = performance.now() - adapterStart;
       bridgeShaderSource = adapted.shaderSource;
       if (activeShaderMode === 'bridge') {
-        pipeline = await createPipeline(device, format, {
+        const nextPipeline = await createPipeline(device, format, {
           label: 'Direct WebGPU generated vertex bridge shader',
           source: bridgeShaderSource,
         });
-        bindGroup = createDirectBindGroup(device, pipeline, bindGroupResources);
+        const nextBindGroup = await createBindGroupForActiveMaterial(nextPipeline, activeShaderMode, activeMaterialId);
+        pipeline = nextPipeline;
+        bindGroup = nextBindGroup;
       }
       setMetric('vertexAdapter', `${adapted.lineCount} GLSL -> WGSL / ${formatDuration(adapterDuration)}`);
     },

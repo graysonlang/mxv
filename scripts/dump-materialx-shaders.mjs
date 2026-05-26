@@ -164,7 +164,7 @@ function sourceExtension(sourceInfo) {
 async function loadSampleDocument(mx, sample) {
   const document = mx.createDocument();
   if (sample.materialPath) {
-    await mx.readFromXmlFile(document, sample.materialPath, sample.searchPath);
+    await mx.readFromXmlString(document, sample.materialx);
   } else {
     await mx.readFromXmlString(document, sample.materialx);
   }

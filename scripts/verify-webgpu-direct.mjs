@@ -262,7 +262,7 @@ function validateReadyState(state) {
   if (metrics.renderer !== 'Direct WebGPU') failures.push(`renderer is ${metrics.renderer || '<blank>'}`);
   if (metrics.material !== expectedMaterial) failures.push(`material is ${metrics.material || '<blank>'}`);
   if (metrics.environment !== expectedEnvironment) failures.push(`environment is ${metrics.environment || '<blank>'}`);
-  if (metrics.shaderContract !== '39 public ports / 288 B') {
+  if (!/^\d+ public ports \/ \d+ B$/.test(metrics.shaderContract || '')) {
     failures.push(`shader contract is ${metrics.shaderContract || '<blank>'}`);
   }
   if (expectedShader === 'naga') {

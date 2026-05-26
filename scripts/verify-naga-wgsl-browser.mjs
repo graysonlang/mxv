@@ -130,7 +130,6 @@ function compileShadersInBrowser(client, manifest, options) {
 async function validateShaderContracts(manifest) {
   const expected = {
     pixel: {
-      bindingCount: 7,
       bindings: [
         { binding: 1, kind: 'uniform', type: 'PrivateUniforms_pixel' },
         { binding: 2, kind: 'texture', type: 'texture_2d<f32>' },
@@ -138,12 +137,11 @@ async function validateShaderContracts(manifest) {
         { binding: 4, kind: 'texture', type: 'texture_2d<f32>' },
         { binding: 5, kind: 'sampler', type: 'sampler' },
         { binding: 6, kind: 'uniform', type: 'PublicUniforms_pixel' },
-        { binding: 7, kind: 'uniform', type: 'LightData_pixel' },
       ],
+      lightType: 'LightData_pixel',
       entryPattern: /@fragment\s+fn\s+main\s*\([^)]*@location\(0\)[^)]*@location\(1\)[^)]*@location\(2\)/s,
     },
     vertex: {
-      bindingCount: 1,
       bindings: [
         { binding: 0, kind: 'uniform', type: 'PrivateUniforms_vertex' },
       ],
@@ -166,10 +164,6 @@ async function validateShaderContracts(manifest) {
       errors.push(`missing ${shader.stage} main entry point with locations 0-2`);
     }
 
-    if (bindings.length !== stageExpected.bindingCount) {
-      errors.push(`expected ${stageExpected.bindingCount} binding(s), found ${bindings.length}`);
-    }
-
     for (const bindingExpected of stageExpected.bindings) {
       const binding = bindingMap.get(bindingExpected.binding);
       if (!binding) {
@@ -184,6 +178,10 @@ async function validateShaderContracts(manifest) {
           `binding ${bindingExpected.binding} is ${binding.kind} ${binding.type}, expected ${bindingExpected.kind} ${bindingExpected.type}`,
         );
       }
+    }
+
+    if (stageExpected.lightType && !bindings.some(binding => binding.kind === 'uniform' && binding.type === stageExpected.lightType)) {
+      errors.push(`missing ${stageExpected.lightType} uniform binding`);
     }
 
     if (errors.length) {
@@ -281,8 +279,12 @@ async function browserCompileShaders(shaders, options) {
 
       device.pushErrorScope('validation');
       try {
-        const bindGroupLayout = createMaterialXBindGroupLayout(device);
-        const bindGroup = createMaterialXBindGroup(device, bindGroupLayout);
+        const bindings = mergeBindings([
+          ...extractBindings(vertexSource, GPUShaderStage.VERTEX),
+          ...extractBindings(fragmentSource, GPUShaderStage.FRAGMENT),
+        ]);
+        const bindGroupLayout = createMaterialXBindGroupLayout(device, bindings);
+        const bindGroup = createMaterialXBindGroup(device, bindGroupLayout, bindings);
         void bindGroup;
 
         const pipelineLayout = device.createPipelineLayout({
@@ -318,14 +320,7 @@ async function browserCompileShaders(shaders, options) {
           },
           vertex: {
             buffers: [
-              {
-                arrayStride: 9 * 4,
-                attributes: [
-                  { format: 'float32x3', offset: 0, shaderLocation: 0 },
-                  { format: 'float32x3', offset: 3 * 4, shaderLocation: 1 },
-                  { format: 'float32x3', offset: 6 * 4, shaderLocation: 2 },
-                ],
-              },
+              createVertexBufferLayout(vertexSource),
             ],
             entryPoint: 'main',
             module: vertexModule,
@@ -364,32 +359,67 @@ async function browserCompileShaders(shaders, options) {
     return results;
   }
 
-  function createMaterialXBindGroupLayout(device) {
-    const vertex = GPUShaderStage.VERTEX;
-    const fragment = GPUShaderStage.FRAGMENT;
+  function extractBindings(source, visibility) {
+    return [...source.matchAll(/@group\((\d+)\)\s*@binding\((\d+)\)\s*var(?:<([^>]+)>)?\s+\w+\s*:\s*([^;]+);/gm)]
+      .map(match => ({
+        binding: Number(match[2]),
+        group: Number(match[1]),
+        kind: match[3] === 'uniform'
+          ? 'uniform'
+          : match[4].trim().startsWith('texture_')
+            ? 'texture'
+            : match[4].trim() === 'sampler'
+              ? 'sampler'
+              : 'unknown',
+        type: match[4].trim(),
+        visibility,
+      }));
+  }
 
+  function mergeBindings(bindings) {
+    const merged = new Map();
+    for (const binding of bindings) {
+      const existing = merged.get(binding.binding);
+      if (existing) {
+        existing.visibility |= binding.visibility;
+        continue;
+      }
+      merged.set(binding.binding, { ...binding });
+    }
+    return [...merged.values()].sort((a, b) => a.binding - b.binding);
+  }
+
+  function createMaterialXBindGroupLayout(device, bindings) {
     return device.createBindGroupLayout({
-      entries: [
-        { binding: 0, buffer: { minBindingSize: 192, type: 'uniform' }, visibility: vertex },
-        { binding: 1, buffer: { minBindingSize: 96, type: 'uniform' }, visibility: fragment },
-        { binding: 2, texture: { sampleType: 'float', viewDimension: '2d' }, visibility: fragment },
-        { binding: 3, sampler: { type: 'filtering' }, visibility: fragment },
-        { binding: 4, texture: { sampleType: 'float', viewDimension: '2d' }, visibility: fragment },
-        { binding: 5, sampler: { type: 'filtering' }, visibility: fragment },
-        { binding: 6, buffer: { minBindingSize: 288, type: 'uniform' }, visibility: fragment },
-        { binding: 7, buffer: { minBindingSize: 48, type: 'uniform' }, visibility: fragment },
-      ],
+      entries: bindings.map(binding => createBindGroupLayoutEntry(binding)),
       label: 'MaterialX direct WebGPU bind group layout',
     });
   }
 
-  function createMaterialXBindGroup(device, layout) {
-    const privateVertexBuffer = createUniformBuffer(device, 'MaterialX verifier private vertex buffer', 192);
-    const privatePixelBuffer = createUniformBuffer(device, 'MaterialX verifier private pixel buffer', 96);
-    const publicUniformBuffer = createUniformBuffer(device, 'MaterialX verifier public pixel buffer', 288);
-    const lightDataBuffer = createUniformBuffer(device, 'MaterialX verifier light data buffer', 48);
-    const radianceTexture = createVerifierTexture(device, 'MaterialX verifier radiance texture');
-    const irradianceTexture = createVerifierTexture(device, 'MaterialX verifier irradiance texture');
+  function createBindGroupLayoutEntry(binding) {
+    const entry = {
+      binding: binding.binding,
+      visibility: binding.visibility,
+    };
+    if (binding.kind === 'uniform') {
+      entry.buffer = { type: 'uniform' };
+    } else if (binding.kind === 'texture') {
+      entry.texture = { sampleType: 'float', viewDimension: '2d' };
+    } else if (binding.kind === 'sampler') {
+      entry.sampler = { type: 'filtering' };
+    }
+    return entry;
+  }
+
+  function createMaterialXBindGroup(device, layout, bindings) {
+    const uniformBuffers = new Map([
+      ['PrivateUniforms_vertex', createUniformBuffer(device, 'MaterialX verifier private vertex buffer', 192)],
+      ['PrivateUniforms_pixel', createUniformBuffer(device, 'MaterialX verifier private pixel buffer', 96)],
+      ['PublicUniforms_pixel', createUniformBuffer(device, 'MaterialX verifier public pixel buffer', 4096)],
+      ['LightData_pixel', createUniformBuffer(device, 'MaterialX verifier light data buffer', 48)],
+    ]);
+    const fallbackUniformBuffer = createUniformBuffer(device, 'MaterialX verifier generic uniform buffer', 4096);
+    const verifierTexture = createVerifierTexture(device, 'MaterialX verifier texture');
     const sampler = device.createSampler({
       addressModeU: 'clamp-to-edge',
       addressModeV: 'clamp-to-edge',
@@ -398,19 +428,53 @@ async function browserCompileShaders(shaders, options) {
     });
 
     return device.createBindGroup({
-      entries: [
-        { binding: 0, resource: { buffer: privateVertexBuffer } },
-        { binding: 1, resource: { buffer: privatePixelBuffer } },
-        { binding: 2, resource: radianceTexture.createView() },
-        { binding: 3, resource: sampler },
-        { binding: 4, resource: irradianceTexture.createView() },
-        { binding: 5, resource: sampler },
-        { binding: 6, resource: { buffer: publicUniformBuffer } },
-        { binding: 7, resource: { buffer: lightDataBuffer } },
-      ],
+      entries: bindings.map(binding => createBindGroupEntry(binding, uniformBuffers, fallbackUniformBuffer, verifierTexture, sampler)),
       label: 'MaterialX direct WebGPU verifier bind group',
       layout,
     });
+  }
+
+  function createBindGroupEntry(binding, uniformBuffers, fallbackUniformBuffer, texture, sampler) {
+    if (binding.kind === 'uniform') {
+      const buffer = uniformBuffers.get(binding.type) || fallbackUniformBuffer;
+      return {
+        binding: binding.binding,
+        resource: { buffer },
+      };
+    }
+    if (binding.kind === 'texture') {
+      return {
+        binding: binding.binding,
+        resource: texture.createView(),
+      };
+    }
+    return {
+      binding: binding.binding,
+      resource: sampler,
+    };
+  }
+
+  function createVertexBufferLayout(vertexSource) {
+    const floatSize = 4;
+    const textured = /@location\(1\)\s+\w*texcoord/i.test(vertexSource);
+    return textured
+      ? {
+          arrayStride: 11 * floatSize,
+          attributes: [
+            { format: 'float32x3', offset: 0, shaderLocation: 0 },
+            { format: 'float32x2', offset: 9 * floatSize, shaderLocation: 1 },
+            { format: 'float32x3', offset: 3 * floatSize, shaderLocation: 2 },
+            { format: 'float32x3', offset: 6 * floatSize, shaderLocation: 3 },
+          ],
+        }
+      : {
+          arrayStride: 11 * floatSize,
+          attributes: [
+            { format: 'float32x3', offset: 0, shaderLocation: 0 },
+            { format: 'float32x3', offset: 3 * floatSize, shaderLocation: 1 },
+            { format: 'float32x3', offset: 6 * floatSize, shaderLocation: 2 },
+          ],
+        };
   }
 
   function createUniformBuffer(device, label, size) {
