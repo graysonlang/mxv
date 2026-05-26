@@ -207,6 +207,8 @@ const portedGeneratedPixelHelpers = [
   'mx_oren_nayar_diffuse',
   'mx_roughness_anisotropy',
   'mx_rotate_vector3',
+  'numActiveLightSources',
+  'sampleLightSource',
 ];
 const privatePixelUniformPorts = [
   { type: 'matrix44', variable: 'u_envMatrix' },
@@ -584,6 +586,20 @@ function createStandardSurfaceBridgeSource() {
   transparency: vec3<f32>,
 };
 
+struct LightShader {
+  intensity: vec3<f32>,
+  direction: vec3<f32>,
+};
+
+fn numActiveLightSources() -> i32 {
+  return min(u_privatePixel.u_numActiveLightSources, 1);
+}
+
+fn sampleLightSource(position: vec3<f32>) -> LightShader {
+  _ = position;
+  return LightShader(vec3<f32>(1.0), normalize(-u_lightData.lightDirection.xyz));
+}
+
 fn mx_square(x: f32) -> f32 {
   return x * x;
 }
@@ -685,7 +701,8 @@ ${parameters}
   let shadingNormal = normalize(normal);
   let shadingTangent = normalize(tangent);
   let viewDirection = normalize(u_privatePixel.u_viewPosition - position_world);
-  let lightDirection = normalize(-u_lightData.lightDirection.xyz);
+  let lightShader = sampleLightSource(position_world);
+  let lightDirection = lightShader.direction;
   let halfVector = normalize(lightDirection + viewDirection);
   let coatTangent = mx_rotate_vector3(shadingTangent, coat_rotation * 360.0, coat_normal);
   let rotatedMainTangent = mx_rotate_vector3(shadingTangent, specular_rotation * 360.0, shadingNormal);
@@ -715,7 +732,7 @@ ${parameters}
   let emissionColor = max(emission_color, vec3<f32>(0.0));
   let surfaceOpacity = saturate(mx_luminance_color3(opacity, vec3<f32>(0.272229, 0.674082, 0.053689)).x);
   let envIntensity = u_privatePixel.u_envLightIntensity;
-  let activeLightCount = f32(u_privatePixel.u_numActiveLightSources);
+  let activeLightCount = f32(numActiveLightSources());
   let nDotL = saturate(dot(shadingNormal, lightDirection));
   let nDotV = saturate(dot(shadingNormal, viewDirection));
   let vDotH = saturate(dot(viewDirection, halfVector));
@@ -729,7 +746,7 @@ ${parameters}
   let coatGamma = 1.0 + coatWeight * coatAffectColor;
   let coatAffectedDiffuse = pow(max(diffuseColor, vec3<f32>(0.0)), vec3<f32>(coatGamma));
   let diffuseResponse = mx_oren_nayar_diffuse(nDotV, nDotL, lDotV, diffuseRoughness);
-  let diffuseLight = vec3<f32>(0.12 + nDotL * diffuseResponse * mix(0.82, 0.58, diffuseRoughness) * directMask) + irradiance * 0.28;
+  let diffuseLight = vec3<f32>(0.12) + lightShader.intensity * (nDotL * diffuseResponse * mix(0.82, 0.58, diffuseRoughness) * directMask) + irradiance * 0.28;
   let diffuse = coatAffectedDiffuse * diffuseLight * (1.0 - metalnessWeight);
   let dielectricF0 = vec3<f32>(mx_ior_to_f0(specularIor)) * specularColor * specularWeight;
   let f0 = dielectricF0 * (1.0 - metalnessWeight) + baseColor * metalnessWeight;
@@ -746,9 +763,9 @@ ${parameters}
   let tangentGlint = vec3<f32>(pow(tDotH, 36.0)) * coatWeight * film * 0.06;
   let emissionTerm = emissionWeight * emissionColor;
   let color = diffuse
-    + specularFresnel * specularTerm * (0.45 + nDotL * 1.6)
+    + specularFresnel * specularTerm * lightShader.intensity * (0.45 + nDotL * 1.6)
     + envSpecular
-    + coatTerm * (0.8 + nDotL * 1.35)
+    + coatTerm * lightShader.intensity * (0.8 + nDotL * 1.35)
     + sheenTerm
     + subsurfaceTerm
     + tangentGlint

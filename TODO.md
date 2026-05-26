@@ -36,6 +36,7 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 - [x] Port `mx_oren_nayar_diffuse` and use it for the bridge's direct diffuse response.
 - [x] Port generated pre-BSDF helpers for luminance and roughness/anisotropy packing.
 - [x] Port `mx_rotate_vector3` and use it for specular and coat tangent rotation.
+- [x] Route direct lab lighting through generated-style `numActiveLightSources` and `sampleLightSource` helpers.
 
 ## In Progress
 

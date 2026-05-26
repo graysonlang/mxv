@@ -306,6 +306,8 @@ Generated pre-BSDF helpers `mx_luminance_color3` and `mx_roughness_anisotropy` a
 
 The bridge also ports `mx_rotate_vector3` and uses it for specular and coat tangent rotation. This starts honoring the generated shader's tangent-rotation inputs for anisotropic specular and coating paths instead of leaving those ports inert.
 
+The direct lab light now flows through generated-style `numActiveLightSources` and `sampleLightSource` helpers. Binding 7 is still a deliberately small bridge placeholder rather than MaterialX's full light data model, but the standard-surface approximation now consumes light count and direction through the same helper boundary that a fuller translated fragment path would target.
+
 MaterialX emits a known warning for the `standard_surface.thin_walled` boolean port because WGSL does not allow booleans in uniform/storage address spaces. The direct page filters that specific Emscripten `printErr` message and surfaces it as `Shader Notes: bool uniform mapped`; unknown MaterialX stderr output is still forwarded to the console.
 
 This is not yet a direct translation of the generated `wgsl-complete.pixel.glsl` output. Instead, it is a browser-WGSL bridge that keeps the generated binding numbers, vertex-stage semantics, and public-uniform semantic order while using a compact hand-authored standard-surface approximation for the fragment stage. That gives the spike a real WebGPU resource contract to measure before investing in a broader shader translator.
