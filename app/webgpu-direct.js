@@ -21,7 +21,7 @@ const maxPixelRatio = 2;
 const depthFormat = 'depth24plus';
 const queryParams = new URLSearchParams(document.location.search);
 const privateVertexFloatCount = 48;
-const privatePixelFloatCount = 28;
+const privatePixelByteLength = 96;
 const lightDataFloatCount = 4;
 const materialXBoolUniformWarning = 'WGSL does not allow boolean types to be stored in uniform or storage address spaces.';
 const materialXKnownWarnings = new Set();
@@ -193,6 +193,16 @@ const materialUniformLayout = createMaterialUniformLayout();
 const publicUniformByteLength = materialUniformLayout.byteLength;
 const publicUniformStructSource = createPublicUniformStructSource();
 const materialAccessorSource = createMaterialAccessorSource();
+const privatePixelUniformPorts = [
+  { type: 'matrix44', variable: 'u_envMatrix' },
+  { type: 'float', variable: 'u_envLightIntensity' },
+  { type: 'integer', variable: 'u_envRadianceMips' },
+  { type: 'integer', variable: 'u_envRadianceSamples' },
+  { type: 'integer', variable: 'u_refractionTwoSided' },
+  { type: 'vector3', variable: 'u_viewPosition' },
+  { type: 'integer', variable: 'u_numActiveLightSources' },
+];
+const privatePixelTexturePorts = new Set(['u_envRadiance', 'u_envIrradiance']);
 
 const baseMaterialPorts = {
   base: 1,
@@ -287,15 +297,18 @@ struct PrivateUniformsVertex {
 
 struct PrivateUniformsPixel {
   u_envMatrix: mat4x4<f32>,
-  u_envLight: vec4<f32>,
-  u_viewPosition: vec4<f32>,
-  u_lightDirection: vec4<f32>,
+  u_envLightIntensity: f32,
+  u_envRadianceMips: i32,
+  u_envRadianceSamples: i32,
+  u_refractionTwoSided: i32,
+  u_viewPosition: vec3<f32>,
+  u_numActiveLightSources: i32,
 };
 
 ${publicUniformStructSource}
 
 struct LightDataPixel {
-  slots: array<vec4<f32>, 1>,
+  lightDirection: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> u_vertex: PrivateUniformsVertex;
@@ -362,8 +375,8 @@ fn thinFilmTint(thickness: f32, coatWeight: f32) -> vec3<f32> {
 fn fragmentMain(input: VertexOutput) -> @location(0) vec4<f32> {
   let normal = normalize(input.normal);
   let tangent = normalize(input.tangent);
-  let viewDirection = normalize(u_privatePixel.u_viewPosition.xyz - input.worldPosition);
-  let lightDirection = normalize(-u_privatePixel.u_lightDirection.xyz);
+  let viewDirection = normalize(u_privatePixel.u_viewPosition - input.worldPosition);
+  let lightDirection = normalize(-u_lightData.lightDirection.xyz);
   let halfVector = normalize(lightDirection + viewDirection);
   let base = materialFloat(0u);
   let baseColor = max(materialColor(1u) * base, vec3<f32>(0.0));
@@ -390,9 +403,8 @@ fn fragmentMain(input: VertexOutput) -> @location(0) vec4<f32> {
   let emission = max(materialFloat(35u), 0.0);
   let emissionColor = max(materialColor(36u), vec3<f32>(0.0));
   let opacity = saturate(dot(materialColor(37u), vec3<f32>(0.272229, 0.674082, 0.053689)));
-  let envIntensity = u_privatePixel.u_envLight.x;
-  let lightDataTouch = saturate(u_lightData.slots[0].x * 0.000001);
-  let activeLightCount = u_privatePixel.u_viewPosition.w + lightDataTouch;
+  let envIntensity = u_privatePixel.u_envLightIntensity;
+  let activeLightCount = f32(u_privatePixel.u_numActiveLightSources);
   let nDotL = saturate(dot(normal, lightDirection));
   let nDotH = saturate(dot(normal, halfVector));
   let nDotV = saturate(dot(normal, viewDirection));
@@ -761,6 +773,32 @@ function validateGeneratedPublicUniforms(generatedPorts, sampleId) {
   }
 }
 
+function validateGeneratedPrivateUniforms(generatedPorts, sampleId) {
+  const generatedBufferPorts = generatedPorts.filter(port => !privatePixelTexturePorts.has(port.variable));
+  if (generatedBufferPorts.length !== privatePixelUniformPorts.length) {
+    throw new Error(`Generated private uniform count changed for "${sampleId}": expected ${privatePixelUniformPorts.length}, got ${generatedBufferPorts.length}.`);
+  }
+
+  const mismatches = [];
+  for (const [index, expectedPort] of privatePixelUniformPorts.entries()) {
+    const generatedPort = generatedBufferPorts[index];
+    if (generatedPort?.variable !== expectedPort.variable) {
+      mismatches.push(`${index}: expected ${expectedPort.variable}, got ${generatedPort?.variable || '<missing>'}`);
+      continue;
+    }
+
+    if (generatedPort.type !== expectedPort.type) {
+      mismatches.push(`${expectedPort.variable}: expected ${expectedPort.type}, got ${generatedPort.type || '<unknown>'}`);
+    }
+  }
+
+  if (mismatches.length) {
+    throw new Error(`Generated private uniform block no longer matches the bridge layout for "${sampleId}": ${mismatches.join('; ')}.`);
+  }
+
+  return generatedBufferPorts.length;
+}
+
 async function generateMaterialSample(mx, sampleId) {
   if (!mx.WgslShaderGenerator) {
     throw new Error('MaterialX runtime does not expose WgslShaderGenerator.');
@@ -784,10 +822,13 @@ async function generateMaterialSample(mx, sampleId) {
 
   const shader = generator.generate(element.getNamePath(), element, context);
   const pixelStage = shader.getStage('pixel');
-  const publicUniforms = pixelStage.getUniformBlocks().PublicUniforms;
+  const uniformBlocks = pixelStage.getUniformBlocks();
+  const publicUniforms = uniformBlocks.PublicUniforms;
+  const privateUniforms = uniformBlocks.PrivateUniforms;
   const ports = clonePorts(fallback.ports);
   const generatedPorts = getBlockPorts(publicUniforms);
   validateGeneratedPublicUniforms(generatedPorts, sampleId);
+  const privateUniformCount = validateGeneratedPrivateUniforms(getBlockPorts(privateUniforms), sampleId);
 
   for (const port of generatedPorts) {
     const name = normalizeMaterialVariableName(port.variable);
@@ -805,6 +846,7 @@ async function generateMaterialSample(mx, sampleId) {
     renderable: element.getNamePath(),
     source: 'shadergen',
     target: typeof generator.getTarget === 'function' ? generator.getTarget() : 'unknown',
+    privateUniformCount,
     uniformCount: generatedPorts.length,
     vertexSource,
     vertexLines: vertexSource.split('\n').length,
@@ -831,6 +873,7 @@ async function initializeMaterialXShaderSupport(materialControl, pipelineControl
     recordDuration('shaderGeneration', shaderStart);
     setMetric('shaderTarget', activeSample?.target || '-');
     setMetric('shaderContract', activeSample ? `${activeSample.uniformCount} public ports / ${publicUniformByteLength} B` : '-');
+    setMetric('contract', activeSample ? `bindings 0-7 / ${activeSample.privateUniformCount} private ports / ${privatePixelByteLength} B` : '-');
     setMetric('shaderSource', activeSample ? `${activeSample.vertexLines}v / ${activeSample.pixelLines}p lines` : '-');
     setMetric('shaderNotes', materialXKnownWarnings.size ? 'bool uniform mapped' : 'none');
     materialControl.refreshOptions();
@@ -1342,15 +1385,28 @@ function writeFrameUniforms(privateVertexData, privatePixelData, dimensions) {
   privateVertexData.set(viewProjection, 16);
   privateVertexData.set(normal, 32);
 
-  privatePixelData.set([
+  privatePixelData.bytes.fill(0);
+  privatePixelData.floats.set([
     -1, 0, 0, 0,
     0, 1, 0, 0,
     0, 0, -1, 0,
     0, 0, 0, 1,
   ], 0);
-  privatePixelData.set([1, 1, 16, 0], 16);
-  privatePixelData.set([...cameraPosition, 1], 20);
-  privatePixelData.set([0.45, -0.8, -0.35, 0], 24);
+  privatePixelData.floats[16] = 1;
+  privatePixelData.ints[17] = 1;
+  privatePixelData.ints[18] = 16;
+  privatePixelData.ints[19] = 0;
+  privatePixelData.floats.set(cameraPosition, 20);
+  privatePixelData.ints[23] = 1;
+}
+
+function createPrivatePixelUniformData() {
+  const buffer = new ArrayBuffer(privatePixelByteLength);
+  return {
+    bytes: new Uint8Array(buffer),
+    floats: new Float32Array(buffer),
+    ints: new Int32Array(buffer),
+  };
 }
 
 function createMaterialUniformData() {
@@ -1566,11 +1622,12 @@ async function main() {
   setMetric('mesh', `${geometry.indices.length / 3} triangles`);
 
   const privateVertexData = new Float32Array(privateVertexFloatCount);
-  const privatePixelData = new Float32Array(privatePixelFloatCount);
+  const privatePixelData = createPrivatePixelUniformData();
   const publicUniformData = createMaterialUniformData();
   const lightData = new Float32Array(lightDataFloatCount);
+  lightData.set([0.45, -0.8, -0.35, 0], 0);
   const privateVertexBuffer = createUniformBuffer(device, 'MaterialX PrivateUniforms vertex', privateVertexData);
-  const privatePixelBuffer = createUniformBuffer(device, 'MaterialX PrivateUniforms pixel', privatePixelData);
+  const privatePixelBuffer = createUniformBuffer(device, 'MaterialX PrivateUniforms pixel', privatePixelData.bytes);
   const publicUniformBuffer = createUniformBuffer(device, 'MaterialX PublicUniforms pixel port table', publicUniformData.bytes);
   const lightDataBuffer = createUniformBuffer(device, 'MaterialX LightData pixel placeholder', lightData);
   const envRadianceTexture = createPlaceholderTexture(device, 'MaterialX env radiance placeholder', [0.32, 0.36, 0.42, 1]);
@@ -1582,7 +1639,7 @@ async function main() {
     minFilter: 'linear',
   });
   device.queue.writeBuffer(lightDataBuffer, 0, lightData);
-  setMetric('contract', 'bindings 0-7');
+  setMetric('contract', `bindings 0-7 / private ${privatePixelByteLength} B`);
   const materialControl = bindMaterialSelect(device, publicUniformBuffer, publicUniformData);
   const bindGroupResources = {
     envIrradianceTexture,
@@ -1627,7 +1684,7 @@ async function main() {
   function render(now) {
     writeFrameUniforms(privateVertexData, privatePixelData, dimensions);
     device.queue.writeBuffer(privateVertexBuffer, 0, privateVertexData);
-    device.queue.writeBuffer(privatePixelBuffer, 0, privatePixelData);
+    device.queue.writeBuffer(privatePixelBuffer, 0, privatePixelData.bytes);
 
     const encoder = device.createCommandEncoder();
     const pass = encoder.beginRenderPass({

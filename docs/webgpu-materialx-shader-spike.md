@@ -91,7 +91,7 @@ Use this as a periodic check, not as a blocker for the exploratory spike.
 | --- | --- | --- |
 | 1. Capture shader contract | Generate a simple material with ESSL and Wgsl outputs, list uniforms, textures, varyings, attributes, and resource bindings. | Done: initial contract captured for `standard` and `pearl`. |
 | 2. Build minimal WebGPU draw | Render a static mesh with a hand-authored WGSL shader and the same camera framing as the lab. | Done: `/webgpu-direct.html` proof draw added, now loading the MaterialX shaderball GLB with a generated sphere fallback. |
-| 3. Adapt one MaterialX sample | Translate the smallest representative generated shader into browser WGSL and bind the required uniforms/textures. | In progress: `/webgpu-direct.html` now binds the MaterialX-style WebGPU resource slots and shades from the generated public-uniform contract; full generated-shader translation remains open. |
+| 3. Adapt one MaterialX sample | Translate the smallest representative generated shader into browser WGSL and bind the required uniforms/textures. | In progress: `/webgpu-direct.html` now binds the MaterialX-style WebGPU resource slots and shades from the generated public/private uniform contracts; full generated-shader translation remains open. |
 | 4. Add one complex sample | Try a more realistic material such as pearl after the simple case works. | Stop if the second material needs many special cases. |
 | 5. Measure against WebGL | Compare compile/setup time, steady FPS, frame stability, and interaction latency against the existing WebGL path. | Stop if performance is similar and implementation complexity is materially higher. |
 | 6. Decide next step | Choose product path: continue WebGPU backend, keep as lab, or defer. | Decide based on measured designer-visible benefit. |
@@ -195,7 +195,7 @@ Bindings:
 - Thin film and emission: `thin_film_thickness`, `thin_film_IOR`, `emission`, `emission_color`.
 - Visibility: `opacity`, `thin_walled`.
 
-`LightData_pixel` reports one inspected port, `light_type: integer`. The shader still expects a light data block, but the initial proof can keep `u_numActiveLightSources` at `0` and bind a minimal placeholder block.
+`LightData_pixel` reports one inspected port, `light_type: integer`. The shader still expects a light data block, so the direct bridge binds a minimal placeholder block and uses it for the lab's direct light direction while private uniforms stay aligned with the generated MaterialX block.
 
 ### Translation Implications
 
@@ -207,7 +207,7 @@ The minimum browser WebGPU proof still needs:
 - A WGSL fragment shader that can accept the `VertexData` equivalent.
 - Uniform buffer layouts matching the generated std140 intent closely enough for the first sample.
 - Environment radiance and irradiance texture/sampler bindings, even if they start as simple placeholder textures.
-- A placeholder light block with zero active lights.
+- A placeholder light block for the lab's direct light while the generated private uniforms stay aligned with MaterialX's emitted block.
 
 The main risk is not sample complexity yet. The main risk is translating or adapting the roughly 80 KB Vulkan-style fragment shader into browser WGSL without accidentally starting a general-purpose shader compiler.
 
@@ -276,11 +276,11 @@ The Phase 3 bridge replaces the original proof shader's single combined uniform 
 The direct WebGPU proof now has a MaterialX-shaped binding harness:
 
 - `binding=0`: vertex private uniform data for world, view-projection, and inverse-transpose matrices.
-- `binding=1`: pixel private uniform data for environment matrix, environment settings, view position, active-light count, and direct-lab light direction.
+- `binding=1`: pixel private uniform data for environment matrix, environment settings, view position, and active-light count.
 - `binding=2` and `binding=3`: placeholder environment radiance texture and sampler.
 - `binding=4` and `binding=5`: placeholder environment irradiance texture and sampler.
 - `binding=6`: public standard-surface material values in the same 39-port order reported by the MaterialX generator.
-- `binding=7`: placeholder light data block.
+- `binding=7`: placeholder light data block, currently used by the bridge for the lab's direct light direction.
 
 The proof draw now uses the vendored MaterialX `shaderball.glb` by default. The loader applies mesh transforms, normalizes the model into the direct renderer's view volume, and packs position, normal, and tangent data into the same WebGPU vertex layout used by the generated sphere fallback. A custom geometry URL can be supplied with `geom=...` for local experiments.
 
@@ -290,7 +290,7 @@ The direct page now loads the MaterialX runtime and runs `WgslShaderGenerator` f
 
 The generated vertex stage is now consumed through a narrow adapter. The direct page validates the expected MaterialX vertex contract from the generated Vulkan-style GLSL source, then rebuilds the browser WebGPU pipeline with an equivalent WGSL vertex entry point. This keeps the generated attribute, uniform, transform, and varying contract live without starting a general shader translator.
 
-The public material uniform buffer now follows the generated `PublicUniforms_pixel` member order and std140-style alignment instead of the first bridge's padded `array<vec4, 39>` table. The direct page validates the generated 39-port block before using shadergen values, packs scalar, `vec3`, and integer fields into a 288-byte buffer, and exposes named WGSL fields that mirror the MaterialX port names. This gets the fragment bridge closer to the shape a translated generated pixel shader would expect.
+The public material uniform buffer now follows the generated `PublicUniforms_pixel` member order and std140-style alignment instead of the first bridge's padded `array<vec4, 39>` table. The direct page validates the generated 39-port block before using shadergen values, packs scalar, `vec3`, and integer fields into a 288-byte buffer, and exposes named WGSL fields that mirror the MaterialX port names. The private pixel buffer now mirrors the generated `PrivateUniforms_pixel` layout as well: environment matrix, environment intensity and sampling integers, refraction sidedness, view position, and active-light count. Filename private ports remain represented by the environment texture/sampler bindings, while the lab-only direct light direction stays in the binding 7 placeholder block.
 
 MaterialX emits a known warning for the `standard_surface.thin_walled` boolean port because WGSL does not allow booleans in uniform/storage address spaces. The direct page filters that specific Emscripten `printErr` message and surfaces it as `Shader Notes: bool uniform mapped`; unknown MaterialX stderr output is still forwarded to the console.
 
