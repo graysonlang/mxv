@@ -203,6 +203,7 @@ const portedGeneratedPixelHelpers = [
   'mx_ggx_NDF',
   'mx_ggx_smith_G1',
   'mx_ggx_smith_G2',
+  'mx_oren_nayar_diffuse',
 ];
 const privatePixelUniformPorts = [
   { type: 'matrix44', variable: 'u_envMatrix' },
@@ -645,6 +646,15 @@ fn mx_bridge_thin_film_tint(thickness: f32, coatWeight: f32) -> vec3<f32> {
   return vec3<f32>(1.0) * (1.0 - strength) + tint * strength;
 }
 
+fn mx_oren_nayar_diffuse(NdotV: f32, NdotL: f32, LdotV: f32, roughness: f32) -> f32 {
+  let s = LdotV - NdotL * NdotV;
+  let stinv = select(0.0, s / max(NdotL, NdotV), s > 0.0);
+  let sigma2 = mx_square(roughness);
+  let A = 1.0 - 0.5 * (sigma2 / (sigma2 + 0.33));
+  let B = 0.45 * sigma2 / (sigma2 + 0.09);
+  return A + B * stinv;
+}
+
 fn ${generatedStandardSurfaceFunctionName}(
 ${parameters}
 ) -> SurfaceShader {
@@ -682,6 +692,7 @@ ${parameters}
   let nDotL = saturate(dot(shadingNormal, lightDirection));
   let nDotV = saturate(dot(shadingNormal, viewDirection));
   let vDotH = saturate(dot(viewDirection, halfVector));
+  let lDotV = saturate(dot(lightDirection, viewDirection));
   let tDotH = abs(dot(shadingTangent, halfVector));
   let irradiance = textureSample(u_envIrradianceTexture, u_envIrradianceSampler, vec2<f32>(0.5, 0.5)).rgb * envIntensity;
   let radiance = textureSample(u_envRadianceTexture, u_envRadianceSampler, vec2<f32>(0.5, 0.5)).rgb * envIntensity;
@@ -690,7 +701,8 @@ ${parameters}
   let diffuseColor = baseColor * (1.0 - transmissionMix) + transmissionColor * transmissionMix;
   let coatGamma = 1.0 + coatWeight * coatAffectColor;
   let coatAffectedDiffuse = pow(max(diffuseColor, vec3<f32>(0.0)), vec3<f32>(coatGamma));
-  let diffuseLight = vec3<f32>(0.12 + nDotL * mix(0.82, 0.58, diffuseRoughness) * directMask) + irradiance * 0.28;
+  let diffuseResponse = mx_oren_nayar_diffuse(nDotV, nDotL, lDotV, diffuseRoughness);
+  let diffuseLight = vec3<f32>(0.12 + nDotL * diffuseResponse * mix(0.82, 0.58, diffuseRoughness) * directMask) + irradiance * 0.28;
   let diffuse = coatAffectedDiffuse * diffuseLight * (1.0 - metalnessWeight);
   let dielectricF0 = vec3<f32>(mx_ior_to_f0(specularIor)) * specularColor * specularWeight;
   let f0 = dielectricF0 * (1.0 - metalnessWeight) + baseColor * metalnessWeight;

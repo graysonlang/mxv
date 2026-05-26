@@ -33,6 +33,7 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 - [x] Port low-risk generated helper names into the WGSL bridge: `mx_square`, `mx_pow5`, `mx_ior_to_f0`, and `mx_fresnel_schlick`.
 - [x] Validate ported fragment helpers against the live generated pixel source and report adapter coverage in the HUD/verifier.
 - [x] Port the generated GGX helper slice and use it for the bridge's direct specular lobes.
+- [x] Port `mx_oren_nayar_diffuse` and use it for the bridge's direct diffuse response.
 
 ## In Progress
 
