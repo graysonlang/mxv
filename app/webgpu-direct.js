@@ -357,6 +357,20 @@ const fallbackMaterialSamples = {
       specularRoughness: 0.28,
     },
   },
+  carPaint: {
+    label: 'Car Paint',
+    ports: {
+      ...baseMaterialPorts,
+      base: 0.5,
+      baseColor: [0.1037792, 0.59212029, 0.85064936],
+      coat: 1,
+      coatRoughness: 0,
+      specular: 1,
+      specularAnisotropy: 0.5,
+      specularColor: [1, 1, 1],
+      specularRoughness: 0.4,
+    },
+  },
   smokedGlass: {
     label: 'Smoked Glass',
     ports: {

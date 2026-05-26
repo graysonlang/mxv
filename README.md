@@ -184,6 +184,7 @@ The direct WebGPU page loads the MaterialX shaderball and the `San Giuseppe Brid
 http://127.0.0.1:8000/webgpu-direct.html?material=pearl
 http://127.0.0.1:8000/webgpu-direct.html?material=standard&shader=naga
 http://127.0.0.1:8000/webgpu-direct.html?material=brushedMetal&shader=naga&envSamples=4&envIntensity=1
+http://127.0.0.1:8000/webgpu-direct.html?material=carPaint&shader=naga&envSamples=16&envIntensity=1
 http://127.0.0.1:8000/webgpu-direct.html?material=brushedMetal&environment=vendor/MaterialX/resources/Lights/table_mountain_split.hdr
 ```
 

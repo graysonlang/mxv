@@ -92,7 +92,7 @@ Use this as a periodic check, not as a blocker for the exploratory spike.
 | 1. Capture shader contract | Generate a simple material with ESSL and Wgsl outputs, list uniforms, textures, varyings, attributes, and resource bindings. | Done: initial contract captured for `standard` and `pearl`. |
 | 2. Build minimal WebGPU draw | Render a static mesh with a hand-authored WGSL shader and the same camera framing as the lab. | Done: `/webgpu-direct.html` proof draw added, now loading the MaterialX shaderball GLB with a generated sphere fallback. |
 | 3. Adapt one MaterialX sample | Translate the smallest representative generated shader into browser WGSL and bind the required uniforms/textures. | In progress: `/webgpu-direct.html` now binds the MaterialX-style WebGPU resource slots and shades from the generated public/private uniform contracts; full generated-shader translation remains open. |
-| 4. Add coverage samples | Exercise representative standard-surface feature families after the simple case works. | Done: direct page now covers standard, pearl, brushed metal, smoked glass, emissive plastic, and coated fabric sample values. |
+| 4. Add coverage samples | Exercise representative standard-surface feature families after the simple case works. | Done: direct page now covers standard, pearl, brushed metal, car paint, smoked glass, emissive plastic, and coated fabric sample values. |
 | 5. Measure against WebGL | Compare compile/setup time, steady FPS, frame stability, and interaction latency against the existing WebGL path. | Stop if performance is similar and implementation complexity is materially higher. |
 | 6. Decide next step | Choose product path: continue WebGPU backend, keep as lab, or defer. | Decide based on measured designer-visible benefit. |
 
@@ -103,9 +103,10 @@ Use a deliberately small ladder:
 1. Standard/simple: prove pipeline, uniforms, and a basic surface.
 2. Pearl: stress coat, sheen, subsurface, and thin-film-style values that are closer to the real motivation.
 3. Brushed metal: exercise metalness, anisotropy, anisotropy rotation, and coat.
-4. Smoked glass: exercise transmission, opacity, thin-walled behavior, and coat.
-5. Emissive plastic: exercise emission values alongside a conventional surface.
-6. Coated fabric: exercise diffuse roughness, sheen, and coat together.
+4. Car paint: mirror the upstream Standard Surface car-paint example to stress colored base, anisotropic specular, and a strong clear coat without emission clipping.
+5. Smoked glass: exercise transmission, opacity, thin-walled behavior, and coat.
+6. Emissive plastic: exercise emission values alongside a conventional surface, but avoid using it as the main visual parity sample because the emission term can clamp presentation.
+7. Coated fabric: exercise diffuse roughness, sheen, and coat together.
 
 Pearl is useful as a complexity probe, but it should not be the first shader brought up.
 Texture bindings remain a follow-on sample because they add a new resource-binding family rather than only broadening the public uniform coverage.
@@ -215,6 +216,16 @@ The minimum browser WebGPU proof still needs:
 
 The main risk is not sample complexity yet. The main risk is translating or adapting the roughly 80 KB Vulkan-style fragment shader into browser WGSL without accidentally starting a general-purpose shader compiler.
 
+## Desktop Viewer Reference
+
+Use the upstream desktop viewer as the reference point for environment-lighting assumptions while evaluating visual parity:
+
+- `../mx/vendor/MaterialX/source/MaterialXView/Main.cpp` defaults to `resources/Lights/san_giuseppe_bridge_split.hdr`, `SPECULAR_ENVIRONMENT_FIS`, `mx::DEFAULT_ENV_SAMPLE_COUNT`, and environment light intensity `1.0`.
+- The desktop command-line help reports `--envMethod 0` as filtered importance sampling, `--envMethod 1` as prefiltered environment maps, and `--envSampleCount` defaulting to `16`.
+- `../mx/vendor/MaterialX/source/MaterialXView/RenderPipelineGL.cpp` only updates the prefiltered environment map when `LightHandler::getUsePrefilteredMap()` is true; otherwise the default path is the generated shader's filtered-importance-sampling environment path.
+
+For this spike, `shader=naga&envSamples=16&envIntensity=1` is the closest direct-viewer setting to the desktop default. The current browser path still uses a simple CPU-generated radiance mip chain, not the desktop viewer's full prefiltering pipeline.
+
 ## Measurements
 
 Track measurements in the lab UI or console before drawing conclusions:
@@ -320,9 +331,9 @@ This is not yet a direct translation of the generated `wgsl-complete.pixel.glsl`
 
 The spike now includes the first deliberately tiny generated GLSL-to-WGSL translator layer. It extracts selected leaf/helper functions from the Vulkan-style MaterialX pixel source, lowers their signatures and simple bodies into browser WGSL, and compile-checks that translated helper module in the WebGPU device. This translated helper slice does not replace the active shading path yet; it is the foothold for expanding toward `out`/`inout` helpers, overload handling, and eventually a closure-function slice while keeping unsupported GLSL constructs explicit.
 
-Naga is now the preferred next translation probe. `npm run spike:naga` regenerates the cached MaterialX shader fixtures, applies a small bool-uniform pre-pass for MaterialX aliases such as `#define thin_walled bool(thin_walled)`, applies a narrow derivative-free fallback for the generated subsurface radius path that otherwise trips Chrome's `fwidth` uniformity analysis, and invokes `naga-cli` on every generated vertex and pixel shader. With `naga-cli v29.0.3`, all six current samples convert successfully to WGSL: each vertex stage is about 207 lines and each full pixel stage is about 5007 lines.
+Naga is now the preferred next translation probe. `npm run spike:naga` regenerates the cached MaterialX shader fixtures, applies a small bool-uniform pre-pass for MaterialX aliases such as `#define thin_walled bool(thin_walled)`, applies a narrow derivative-free fallback for the generated subsurface radius path that otherwise trips Chrome's `fwidth` uniformity analysis, and invokes `naga-cli` on every generated vertex and pixel shader. With `naga-cli v29.0.3`, all seven current samples convert successfully to WGSL: each vertex stage is about 207 lines and each full pixel stage is about 5007 lines.
 
-`npm run verify:naga-wgsl` browser-verifies those Naga WGSL outputs with Chrome/WebGPU. With the current pre-passes, all generated vertex and pixel modules compile as browser WGSL shader modules, the generated bindings and entry points match the direct WebGPU harness, and all six translated samples compile as render pipelines with the explicit MaterialX bind group layout. The direct WebGPU page can now switch to those generated fixtures with `shader=naga`; this draws the shaderball with the translated vertex and pixel modules while reusing the direct page's mesh buffers, MaterialX-shaped uniform buffers, and HDR environment textures. The runtime path applies display encoding to the translated fragment output before presentation, exposes `envSamples` / `envIntensity` controls so expensive FIS-heavy materials can be measured at lower sample counts, and supplies a mipmapped radiance texture so rough and anisotropic environment lookups are no longer forced through mip 0. The subsurface-radius pre-pass and simple CPU mip generation remain deliberate spike compromises, not claims that the translated shader is visually equivalent to the desktop viewer.
+`npm run verify:naga-wgsl` browser-verifies those Naga WGSL outputs with Chrome/WebGPU. With the current pre-passes, all generated vertex and pixel modules compile as browser WGSL shader modules, the generated bindings and entry points match the direct WebGPU harness, and all seven translated samples compile as render pipelines with the explicit MaterialX bind group layout. The direct WebGPU page can now switch to those generated fixtures with `shader=naga`; this draws the shaderball with the translated vertex and pixel modules while reusing the direct page's mesh buffers, MaterialX-shaped uniform buffers, and HDR environment textures. The runtime path applies display encoding to the translated fragment output before presentation, exposes `envSamples` / `envIntensity` controls so expensive FIS-heavy materials can be measured at lower sample counts, and supplies a mipmapped radiance texture so rough and anisotropic environment lookups are no longer forced through mip 0. The subsurface-radius pre-pass and simple CPU mip generation remain deliberate spike compromises, not claims that the translated shader is visually equivalent to the desktop viewer.
 
 The direct page includes a material selector for the generated coverage sample values, and accepts the same state through the URL:
 
@@ -330,8 +341,10 @@ The direct page includes a material selector for the generated coverage sample v
 http://127.0.0.1:8000/webgpu-direct.html?material=standard
 http://127.0.0.1:8000/webgpu-direct.html?material=standard&shader=naga
 http://127.0.0.1:8000/webgpu-direct.html?material=brushedMetal&shader=naga&envSamples=4
+http://127.0.0.1:8000/webgpu-direct.html?material=carPaint&shader=naga&envSamples=16
 http://127.0.0.1:8000/webgpu-direct.html?material=pearl
 http://127.0.0.1:8000/webgpu-direct.html?material=brushedMetal
+http://127.0.0.1:8000/webgpu-direct.html?material=carPaint
 http://127.0.0.1:8000/webgpu-direct.html?material=smokedGlass
 http://127.0.0.1:8000/webgpu-direct.html?material=emissivePlastic
 http://127.0.0.1:8000/webgpu-direct.html?material=coatedFabric
