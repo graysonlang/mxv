@@ -426,6 +426,81 @@ function handleMaterialXPrintErr(value) {
   console.warn(`[MaterialX] ${message}`);
 }
 
+function replaceShaderVertexMain(source, vertexMainSource) {
+  const start = source.indexOf('@vertex\nfn vertexMain');
+  const endMarker = '\n\nfn saturate(value: f32)';
+  const end = source.indexOf(endMarker);
+  if (start < 0 || end < 0 || end <= start) {
+    throw new Error('Could not locate the bridge vertex stage in the direct WebGPU shader.');
+  }
+
+  return `${source.slice(0, start)}${vertexMainSource}${source.slice(end)}`;
+}
+
+function adaptGeneratedVertexSource(generatedSource) {
+  const checks = [
+    {
+      label: 'binding 0 PrivateUniforms_vertex',
+      pattern: /layout\s*\(\s*std140\s*,\s*binding\s*=\s*0\s*\)\s*uniform\s+PrivateUniforms_vertex/,
+    },
+    {
+      label: 'position location 0',
+      pattern: /layout\s*\(\s*location\s*=\s*0\s*\)\s*in\s+vec3\s+i_position/,
+    },
+    {
+      label: 'normal location 1',
+      pattern: /layout\s*\(\s*location\s*=\s*1\s*\)\s*in\s+vec3\s+i_normal/,
+    },
+    {
+      label: 'tangent location 2',
+      pattern: /layout\s*\(\s*location\s*=\s*2\s*\)\s*in\s+vec3\s+i_tangent/,
+    },
+    {
+      label: 'world position transform',
+      pattern: /hPositionWorld\s*=\s*u_worldMatrix\s*\*\s*vec4\s*\(\s*i_position\s*,\s*1\.0\s*\)/,
+    },
+    {
+      label: 'clip position transform',
+      pattern: /gl_Position\s*=\s*u_viewProjectionMatrix\s*\*\s*hPositionWorld/,
+    },
+    {
+      label: 'normal output',
+      pattern: /vd\.normalWorld\s*=\s*normalize\s*\([^;]*u_worldInverseTransposeMatrix[^;]*i_normal/s,
+    },
+    {
+      label: 'tangent output',
+      pattern: /vd\.tangentWorld\s*=\s*normalize\s*\([^;]*u_worldMatrix[^;]*i_tangent/s,
+    },
+    {
+      label: 'world position output',
+      pattern: /vd\.positionWorld\s*=\s*hPositionWorld\.xyz/,
+    },
+  ];
+  const missing = checks
+    .filter(check => !check.pattern.test(generatedSource))
+    .map(check => check.label);
+
+  if (missing.length) {
+    throw new Error(`Generated vertex source does not match the narrow adapter contract: ${missing.join(', ')}.`);
+  }
+
+  const vertexMainSource = `@vertex
+fn vertexMain(input: VertexInput) -> VertexOutput {
+  var output: VertexOutput;
+  let hPositionWorld = u_vertex.u_worldMatrix * vec4<f32>(input.position, 1.0);
+  output.clipPosition = u_vertex.u_viewProjectionMatrix * hPositionWorld;
+  output.worldPosition = hPositionWorld.xyz;
+  output.normal = normalize((u_vertex.u_worldInverseTransposeMatrix * vec4<f32>(input.normal, 0.0)).xyz);
+  output.tangent = normalize((u_vertex.u_worldMatrix * vec4<f32>(input.tangent, 0.0)).xyz);
+  return output;
+}`;
+
+  return {
+    lineCount: generatedSource.split('\n').length,
+    shaderSource: replaceShaderVertexMain(shaderSource, vertexMainSource),
+  };
+}
+
 function normalizeMaterialVariableName(variable) {
   return materialVariableAliases[variable] || variable;
 }
@@ -503,12 +578,13 @@ async function generateMaterialSample(mx, sampleId) {
     source: 'shadergen',
     target: typeof generator.getTarget === 'function' ? generator.getTarget() : 'unknown',
     uniformCount: generatedPorts.length,
+    vertexSource,
     vertexLines: vertexSource.split('\n').length,
     pixelLines: pixelSource.split('\n').length,
   };
 }
 
-async function initializeMaterialXShaderSupport(materialControl) {
+async function initializeMaterialXShaderSupport(materialControl, pipelineControl = {}) {
   try {
     setStatus('Loading MaterialX shadergen');
     const materialXStart = performance.now();
@@ -531,11 +607,21 @@ async function initializeMaterialXShaderSupport(materialControl) {
     setMetric('shaderNotes', materialXKnownWarnings.size ? 'bool uniform mapped' : 'none');
     materialControl.refreshOptions();
     materialControl.applyMaterial(activeMaterialId, { updateUrl: false });
+    if (activeSample?.vertexSource && pipelineControl.applyGeneratedVertexSource) {
+      try {
+        setStatus('Adapting MaterialX vertex shader');
+        await pipelineControl.applyGeneratedVertexSource(activeSample.vertexSource);
+      } catch (error) {
+        console.warn('Generated vertex adaptation failed, keeping bridge vertex stage.', error);
+        setMetric('vertexAdapter', 'bridge fallback');
+      }
+    }
     setStatus('Ready');
   } catch (error) {
     console.error(error);
     setMetric('shaderTarget', 'fallback');
     setMetric('shaderContract', error?.message || String(error));
+    setMetric('vertexAdapter', 'fallback active');
     setMetric('shaderNotes', 'fallback active');
     setStatus('Shadergen fallback active');
   }
@@ -910,12 +996,19 @@ function createDepthTexture(device, dimensions) {
   });
 }
 
-function createPipeline(device, format) {
-  const start = performance.now();
+function createPipeline(device, format, options = {}) {
+  const {
+    label = 'Direct WebGPU proof shader',
+    source = shaderSource,
+  } = options;
+  const moduleStart = performance.now();
   const shaderModule = device.createShaderModule({
-    code: shaderSource,
-    label: 'Direct WebGPU proof shader',
+    code: source,
+    label,
   });
+  setMetric('shaderModule', formatDuration(performance.now() - moduleStart));
+
+  const start = performance.now();
   const pipeline = device.createRenderPipeline({
     depthStencil: {
       depthCompare: 'less',
@@ -927,7 +1020,7 @@ function createPipeline(device, format) {
       module: shaderModule,
       targets: [{ format }],
     },
-    label: 'Direct WebGPU proof pipeline',
+    label: label.replace(/\bshader\b/i, 'pipeline'),
     layout: 'auto',
     primitive: {
       cullMode: 'back',
@@ -1158,6 +1251,46 @@ function createFpsMeter() {
   };
 }
 
+function createDirectBindGroup(device, pipeline, resources) {
+  return device.createBindGroup({
+    entries: [
+      {
+        binding: 0,
+        resource: { buffer: resources.privateVertexBuffer },
+      },
+      {
+        binding: 1,
+        resource: { buffer: resources.privatePixelBuffer },
+      },
+      {
+        binding: 2,
+        resource: resources.envRadianceTexture.createView(),
+      },
+      {
+        binding: 3,
+        resource: resources.envSampler,
+      },
+      {
+        binding: 4,
+        resource: resources.envIrradianceTexture.createView(),
+      },
+      {
+        binding: 5,
+        resource: resources.envSampler,
+      },
+      {
+        binding: 6,
+        resource: { buffer: resources.publicUniformBuffer },
+      },
+      {
+        binding: 7,
+        resource: { buffer: resources.lightDataBuffer },
+      },
+    ],
+    layout: pipeline.getBindGroupLayout(0),
+  });
+}
+
 async function main() {
   const canvas = document.getElementById('direct-webgpu-canvas');
   const context = canvas.getContext('webgpu');
@@ -1170,7 +1303,7 @@ async function main() {
   const format = navigator.gpu.getPreferredCanvasFormat();
   let dimensions = configureCanvas(canvas, device, context, format);
   let depthTexture = createDepthTexture(device, dimensions);
-  const pipeline = createPipeline(device, format);
+  let pipeline = createPipeline(device, format);
 
   const meshStart = performance.now();
   const geometry = await loadGeometry();
@@ -1199,47 +1332,33 @@ async function main() {
   device.queue.writeBuffer(lightDataBuffer, 0, lightData);
   setMetric('contract', 'bindings 0-7');
   const materialControl = bindMaterialSelect(device, publicUniformBuffer, publicUniformData);
-  initializeMaterialXShaderSupport(materialControl).catch((error) => {
+  const bindGroupResources = {
+    envIrradianceTexture,
+    envRadianceTexture,
+    envSampler,
+    lightDataBuffer,
+    privatePixelBuffer,
+    privateVertexBuffer,
+    publicUniformBuffer,
+  };
+  let bindGroup = createDirectBindGroup(device, pipeline, bindGroupResources);
+  const pipelineControl = {
+    applyGeneratedVertexSource: async (generatedVertexSource) => {
+      const adapterStart = performance.now();
+      const adapted = adaptGeneratedVertexSource(generatedVertexSource);
+      const adapterDuration = performance.now() - adapterStart;
+      pipeline = createPipeline(device, format, {
+        label: 'Direct WebGPU generated vertex bridge shader',
+        source: adapted.shaderSource,
+      });
+      bindGroup = createDirectBindGroup(device, pipeline, bindGroupResources);
+      setMetric('vertexAdapter', `${adapted.lineCount} GLSL -> WGSL / ${formatDuration(adapterDuration)}`);
+    },
+  };
+
+  initializeMaterialXShaderSupport(materialControl, pipelineControl).catch((error) => {
     console.error(error);
     setStatus('Shadergen fallback active');
-  });
-
-  const bindGroup = device.createBindGroup({
-    entries: [
-      {
-        binding: 0,
-        resource: { buffer: privateVertexBuffer },
-      },
-      {
-        binding: 1,
-        resource: { buffer: privatePixelBuffer },
-      },
-      {
-        binding: 2,
-        resource: envRadianceTexture.createView(),
-      },
-      {
-        binding: 3,
-        resource: envSampler,
-      },
-      {
-        binding: 4,
-        resource: envIrradianceTexture.createView(),
-      },
-      {
-        binding: 5,
-        resource: envSampler,
-      },
-      {
-        binding: 6,
-        resource: { buffer: publicUniformBuffer },
-      },
-      {
-        binding: 7,
-        resource: { buffer: lightDataBuffer },
-      },
-    ],
-    layout: pipeline.getBindGroupLayout(0),
   });
 
   bindCanvasControls(canvas);
