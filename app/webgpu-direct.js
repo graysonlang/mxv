@@ -206,6 +206,7 @@ const portedGeneratedPixelHelpers = [
   'mx_luminance_color3',
   'mx_oren_nayar_diffuse',
   'mx_roughness_anisotropy',
+  'mx_rotate_vector3',
 ];
 const privatePixelUniformPorts = [
   { type: 'matrix44', variable: 'u_envMatrix' },
@@ -639,6 +640,15 @@ fn mx_luminance_color3(inputValue: vec3<f32>, lumacoeffs: vec3<f32>) -> vec3<f32
   return vec3<f32>(dot(inputValue, lumacoeffs));
 }
 
+fn mx_rotate_vector3(inputValue: vec3<f32>, amount: f32, axisValue: vec3<f32>) -> vec3<f32> {
+  let axis = normalize(axisValue);
+  let rotationRadians = amount * 0.017453292519943295;
+  let s = sin(rotationRadians);
+  let c = cos(rotationRadians);
+  let oc = 1.0 - c;
+  return inputValue * c + cross(inputValue, axis) * s + axis * dot(axis, inputValue) * oc;
+}
+
 fn mx_bridge_specular_lobe(N: vec3<f32>, L: vec3<f32>, V: vec3<f32>, X: vec3<f32>, alphaInput: vec2<f32>) -> f32 {
   let alpha = clamp(alphaInput, vec2<f32>(0.045), vec2<f32>(1.0));
   let Nn = normalize(N);
@@ -677,6 +687,9 @@ ${parameters}
   let viewDirection = normalize(u_privatePixel.u_viewPosition - position_world);
   let lightDirection = normalize(-u_lightData.lightDirection.xyz);
   let halfVector = normalize(lightDirection + viewDirection);
+  let coatTangent = mx_rotate_vector3(shadingTangent, coat_rotation * 360.0, coat_normal);
+  let rotatedMainTangent = mx_rotate_vector3(shadingTangent, specular_rotation * 360.0, shadingNormal);
+  let mainTangent = select(shadingTangent, rotatedMainTangent, specular_anisotropy > 0.0);
   let baseColor = max(base_color * base, vec3<f32>(0.0));
   let diffuseRoughness = saturate(diffuse_roughness);
   let metalnessWeight = saturate(metalness);
@@ -707,7 +720,7 @@ ${parameters}
   let nDotV = saturate(dot(shadingNormal, viewDirection));
   let vDotH = saturate(dot(viewDirection, halfVector));
   let lDotV = saturate(dot(lightDirection, viewDirection));
-  let tDotH = abs(dot(shadingTangent, halfVector));
+  let tDotH = abs(dot(mainTangent, halfVector));
   let irradiance = textureSample(u_envIrradianceTexture, u_envIrradianceSampler, vec2<f32>(0.5, 0.5)).rgb * envIntensity;
   let radiance = textureSample(u_envRadianceTexture, u_envRadianceSampler, vec2<f32>(0.5, 0.5)).rgb * envIntensity;
   let directMask = max(activeLightCount, 1.0);
@@ -722,12 +735,12 @@ ${parameters}
   let f0 = dielectricF0 * (1.0 - metalnessWeight) + baseColor * metalnessWeight;
   let specularFresnel = mx_fresnel_schlick(vDotH, f0);
   let mainRoughness = mx_roughness_anisotropy(mix(specularRoughness, 1.0, coatWeight * coatAffectRoughness), specular_anisotropy);
-  let specularTerm = mx_bridge_specular_lobe(shadingNormal, lightDirection, viewDirection, shadingTangent, mainRoughness);
+  let specularTerm = mx_bridge_specular_lobe(shadingNormal, lightDirection, viewDirection, mainTangent, mainRoughness);
   let envSpecular = radiance * mx_fresnel_schlick(nDotV, f0) * mix(0.35, 0.08, specularRoughness);
   let coatF0 = vec3<f32>(mx_ior_to_f0(coatIor)) * coatColor;
   let film = mx_bridge_thin_film_tint(thinFilmThickness, coatWeight);
   let coatRoughnessVector = mx_roughness_anisotropy(coatRoughness, coat_anisotropy);
-  let coatTerm = coatWeight * mx_bridge_specular_lobe(shadingNormal, lightDirection, viewDirection, shadingTangent, coatRoughnessVector) * mx_fresnel_schlick(vDotH, coatF0) * film;
+  let coatTerm = coatWeight * mx_bridge_specular_lobe(coat_normal, lightDirection, viewDirection, coatTangent, coatRoughnessVector) * mx_fresnel_schlick(vDotH, coatF0) * film;
   let sheenTerm = sheenWeight * sheenColor * pow(1.0 - nDotV, mix(6.0, 1.4, sheenRoughness)) * 0.32;
   let subsurfaceTerm = subsurfaceWeight * subsurfaceColor * (0.1 + 0.42 * pow(1.0 - nDotV, 2.0));
   let tangentGlint = vec3<f32>(pow(tDotH, 36.0)) * coatWeight * film * 0.06;

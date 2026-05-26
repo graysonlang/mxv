@@ -304,6 +304,8 @@ The direct diffuse response now uses a port of the generated `mx_oren_nayar_diff
 
 Generated pre-BSDF helpers `mx_luminance_color3` and `mx_roughness_anisotropy` are now ported as well. Opacity luminance and anisotropic roughness packing now flow through those helper boundaries before the bridge calls its direct diffuse and specular approximations.
 
+The bridge also ports `mx_rotate_vector3` and uses it for specular and coat tangent rotation. This starts honoring the generated shader's tangent-rotation inputs for anisotropic specular and coating paths instead of leaving those ports inert.
+
 MaterialX emits a known warning for the `standard_surface.thin_walled` boolean port because WGSL does not allow booleans in uniform/storage address spaces. The direct page filters that specific Emscripten `printErr` message and surfaces it as `Shader Notes: bool uniform mapped`; unknown MaterialX stderr output is still forwarded to the console.
 
 This is not yet a direct translation of the generated `wgsl-complete.pixel.glsl` output. Instead, it is a browser-WGSL bridge that keeps the generated binding numbers, vertex-stage semantics, and public-uniform semantic order while using a compact hand-authored standard-surface approximation for the fragment stage. That gives the spike a real WebGPU resource contract to measure before investing in a broader shader translator.
