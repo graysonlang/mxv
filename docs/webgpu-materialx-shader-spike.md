@@ -91,10 +91,10 @@ Use this as a periodic check, not as a blocker for the exploratory spike.
 | --- | --- | --- |
 | 1. Capture shader contract | Generate a simple material with ESSL and Wgsl outputs, list uniforms, textures, varyings, attributes, and resource bindings. | Done: initial contract captured for `standard` and `pearl`. |
 | 2. Build minimal WebGPU draw | Render a static mesh with a hand-authored WGSL shader and the same camera framing as the lab. | Done: `/webgpu-direct.html` proof draw added, now loading the MaterialX shaderball GLB with a generated sphere fallback. |
-| 3. Adapt one MaterialX sample | Translate the smallest representative generated shader into browser WGSL and bind the required uniforms/textures. | In progress: `/webgpu-direct.html` now binds the MaterialX-style WebGPU resource slots and shades from the generated public/private uniform contracts; full generated-shader translation remains open. |
+| 3. Adapt one MaterialX sample | Translate the smallest representative generated shader into browser WGSL and bind the required uniforms/textures. | Direction set: Naga-translated WGSL is the primary direct WebGPU path; the hand-authored bridge remains diagnostic only. |
 | 4. Add coverage samples | Exercise representative standard-surface feature families after the simple case works. | Done: direct page now covers standard, pearl, brushed metal, car paint, smoked glass, emissive plastic, and coated fabric sample values. |
-| 5. Measure against WebGL | Compare compile/setup time, steady FPS, frame stability, and interaction latency against the existing WebGL path. | Stop if performance is similar and implementation complexity is materially higher. |
-| 6. Decide next step | Choose product path: continue WebGPU backend, keep as lab, or defer. | Decide based on measured designer-visible benefit. |
+| 5. Measure against WebGL | Compare compile/setup time, steady FPS, frame stability, and interaction latency against the existing WebGL fallback. | Continue hardening Naga unless parity or reliability regresses materially. |
+| 6. Decide next step | Choose how to productize the path. | Current recommendation: WebGPU + Naga first, WebGL fallback for unsupported systems. |
 
 ## First Materials
 
@@ -282,9 +282,19 @@ Defer full WebGPU backend work if:
 - Three.js/R3F integration would require replacing too much renderer behavior.
 - Most of the likely wins require future MaterialX upstream improvements anyway.
 
-## Immediate Next Step
+## Current Recommendation
 
-Continue Phase 3: use the direct WebGPU binding bridge to measure whether the MaterialX-shaped path has enough upside to justify deeper shader adaptation work.
+Treat Naga-translated WebGPU as the primary direct viewer path. It is already showing meaningfully better MaterialX fidelity than the hand-authored bridge and, in early interactive testing, feels faster for simple material cases than the WebGL viewer. The bridge has served its purpose as a binding and camera/mesh scaffold, but building it up to match MaterialX feature parity would be prohibitive now that Naga is successfully compiling and rendering the generated shader output.
+
+The intended product shape is:
+
+- Prefer WebGPU + Naga-translated MaterialX output when `navigator.gpu` and the known shader pipeline compile successfully.
+- Fall back to the existing WebGL MaterialX viewer on unsupported or failing systems.
+- Keep the bridge path as a development diagnostic for resource contracts, not as a user-facing fidelity path.
+
+The next hardening work should focus on Naga fixtures, textured material bindings, graceful capability routing, and parity checks against the desktop viewer and WebGL fallback.
+
+## Shader Fixture Workflow
 
 Use the shader dump command to create local generated-source fixtures:
 
@@ -304,7 +314,7 @@ The Phase 2 proof draw now covers:
 - Render with position, normal, and tangent attributes.
 - Use the same camera FOV, near plane, far plane, and approximate fit distance as the lab.
 
-The Phase 3 bridge replaces the original proof shader's single combined uniform block with the MaterialX-style resource bindings while keeping the Phase 2 browser WebGPU setup, mesh upload, camera, and metrics intact.
+The Phase 3 bridge replaced the original proof shader's single combined uniform block with the MaterialX-style resource bindings while keeping the Phase 2 browser WebGPU setup, mesh upload, camera, and metrics intact. It remains useful as a small diagnostic path, but Naga is now the primary path for fidelity and future product evaluation.
 
 ## Phase 3 Progress
 
@@ -333,7 +343,7 @@ The public material uniform buffer now follows the generated `PublicUniforms_pix
 
 The generated fragment source is also probed before the bridge reports shadergen as active. The direct page checks the expected fragment-stage declarations, validates the generated `NG_standard_surface_surfaceshader_100` function parameter order, and validates the generated `main()` call argument order. This still does not render the generated fragment source directly, but it locks down the next hand-port or tiny-translator target against the live MaterialX output.
 
-The browser WGSL fragment path now mirrors that generated outer shape. It builds generated-style normal/tangent locals, calls a WGSL bridge function named `NG_standard_surface_surfaceshader_100`, and returns a generated-style `out1` color. The bridge function still contains the compact hand-authored standard-surface approximation, but the call boundary now matches the generated shader flow closely enough for the next closure-function port to happen inside that function rather than around it.
+The browser WGSL fragment bridge mirrors the generated outer shape. It builds generated-style normal/tangent locals, calls a WGSL bridge function named `NG_standard_surface_surfaceshader_100`, and returns a generated-style `out1` color. This remains useful for contract debugging, but the compact hand-authored standard-surface approximation is no longer a practical route to full fidelity now that the Naga-translated generated shader is working.
 
 The first generated helper slice has been ported into the WGSL bridge with MaterialX-compatible names: `mx_square`, `mx_pow5`, `mx_ior_to_f0`, and `mx_fresnel_schlick`. The fragment adapter validates that those helper names still exist in the live generated pixel source and reports helper coverage in the HUD. The remaining approximation-specific helpers are still named with an `mx_bridge_` prefix so it is clear which pieces are not direct generated-function ports yet.
 
@@ -351,7 +361,7 @@ MaterialX emits a known warning for the `standard_surface.thin_walled` boolean p
 
 This is not yet a direct translation of the generated `wgsl-complete.pixel.glsl` output. Instead, it is a browser-WGSL bridge that keeps the generated binding numbers, vertex-stage semantics, and public-uniform semantic order while using a compact hand-authored standard-surface approximation for the fragment stage. That gives the spike a real WebGPU resource contract to measure before investing in a broader shader translator.
 
-The spike now includes the first deliberately tiny generated GLSL-to-WGSL translator layer. It extracts selected leaf/helper functions from the Vulkan-style MaterialX pixel source, lowers their signatures and simple bodies into browser WGSL, and compile-checks that translated helper module in the WebGPU device. This translated helper slice does not replace the active shading path yet; it is the foothold for expanding toward `out`/`inout` helpers, overload handling, and eventually a closure-function slice while keeping unsupported GLSL constructs explicit.
+The spike includes a deliberately tiny generated GLSL-to-WGSL translator layer. It extracts selected leaf/helper functions from the Vulkan-style MaterialX pixel source, lowers their signatures and simple bodies into browser WGSL, and compile-checks that translated helper module in the WebGPU device. This path is now best treated as a narrow fallback or diagnostic tool rather than a planned full shader translator.
 
 Naga is now the preferred next translation probe. `npm run spike:naga` regenerates the cached MaterialX shader fixtures, applies a small bool-uniform pre-pass for MaterialX aliases such as `#define thin_walled bool(thin_walled)`, applies a narrow derivative-free fallback for the generated subsurface radius path that otherwise trips Chrome's `fwidth` uniformity analysis, and invokes `naga-cli` on every generated vertex and pixel shader. With `naga-cli v29.0.3`, all seven current samples convert successfully to WGSL: each vertex stage is about 207 lines and each full pixel stage is about 5033 lines with the registered directional-light path.
 
@@ -376,7 +386,7 @@ http://127.0.0.1:8000/webgpu-direct.html?material=coatedFabric
 http://127.0.0.1:8000/webgpu-direct.html?material=pearl&environment=vendor/MaterialX/resources/Lights/table_mountain_split.hdr
 ```
 
-Next, compare the direct bridge against the WebGL viewer for setup cost, steady FPS, and material-switch latency. If those numbers look promising, the next technical step is to decide whether to port selected generated closure functions into WGSL by hand or build a tiny translator for the narrow subset used by `standard_surface`.
+Next, harden the Naga path against real product needs: add textured MaterialX samples, improve capability routing, keep the generated shader fixtures repeatable, and compare Naga/WebGPU against the WebGL fallback and desktop viewer for visual parity and performance.
 
 The direct page now exposes material-switch instrumentation:
 
