@@ -570,21 +570,30 @@ function createStandardSurfaceBridgeSource() {
   transparency: vec3<f32>,
 };
 
-fn iorToF0(ior: f32) -> f32 {
+fn mx_square(x: f32) -> f32 {
+  return x * x;
+}
+
+fn mx_pow5(x: f32) -> f32 {
+  return mx_square(mx_square(x)) * x;
+}
+
+fn mx_ior_to_f0(ior: f32) -> f32 {
   let ratio = (ior - 1.0) / (ior + 1.0);
   return ratio * ratio;
 }
 
-fn fresnelSchlick(cosTheta: f32, f0: vec3<f32>) -> vec3<f32> {
-  return f0 + (vec3<f32>(1.0) - f0) * pow(1.0 - saturate(cosTheta), 5.0);
+fn mx_fresnel_schlick(cosTheta: f32, f0: vec3<f32>) -> vec3<f32> {
+  let x = clamp(1.0 - cosTheta, 0.0, 1.0);
+  return f0 + (vec3<f32>(1.0) - f0) * mx_pow5(x);
 }
 
-fn specularLobe(nDotH: f32, roughness: f32) -> f32 {
+fn mx_bridge_specular_lobe(nDotH: f32, roughness: f32) -> f32 {
   let power = mix(192.0, 8.0, saturate(roughness));
   return pow(saturate(nDotH), power) * mix(1.0, 0.22, saturate(roughness));
 }
 
-fn thinFilmTint(thickness: f32, coatWeight: f32) -> vec3<f32> {
+fn mx_bridge_thin_film_tint(thickness: f32, coatWeight: f32) -> vec3<f32> {
   let strength = saturate(thickness / 700.0) * saturate(coatWeight);
   let phase = vec3<f32>(0.0, 2.0943951, 4.1887902) + thickness * 0.018;
   let tint = vec3<f32>(0.64) + 0.36 * cos(phase);
@@ -639,14 +648,14 @@ ${parameters}
   let coatAffectedDiffuse = pow(max(diffuseColor, vec3<f32>(0.0)), vec3<f32>(coatGamma));
   let diffuseLight = vec3<f32>(0.12 + nDotL * mix(0.82, 0.58, diffuseRoughness) * directMask) + irradiance * 0.28;
   let diffuse = coatAffectedDiffuse * diffuseLight * (1.0 - metalnessWeight);
-  let dielectricF0 = vec3<f32>(iorToF0(specularIor)) * specularColor * specularWeight;
+  let dielectricF0 = vec3<f32>(mx_ior_to_f0(specularIor)) * specularColor * specularWeight;
   let f0 = dielectricF0 * (1.0 - metalnessWeight) + baseColor * metalnessWeight;
-  let specularFresnel = fresnelSchlick(vDotH, f0);
-  let specularTerm = specularLobe(nDotH, mix(specularRoughness, 1.0, coatWeight * coatAffectRoughness));
-  let envSpecular = radiance * fresnelSchlick(nDotV, f0) * mix(0.35, 0.08, specularRoughness);
-  let coatF0 = vec3<f32>(iorToF0(coatIor)) * coatColor;
-  let film = thinFilmTint(thinFilmThickness, coatWeight);
-  let coatTerm = coatWeight * specularLobe(nDotH, coatRoughness) * fresnelSchlick(vDotH, coatF0) * film;
+  let specularFresnel = mx_fresnel_schlick(vDotH, f0);
+  let specularTerm = mx_bridge_specular_lobe(nDotH, mix(specularRoughness, 1.0, coatWeight * coatAffectRoughness));
+  let envSpecular = radiance * mx_fresnel_schlick(nDotV, f0) * mix(0.35, 0.08, specularRoughness);
+  let coatF0 = vec3<f32>(mx_ior_to_f0(coatIor)) * coatColor;
+  let film = mx_bridge_thin_film_tint(thinFilmThickness, coatWeight);
+  let coatTerm = coatWeight * mx_bridge_specular_lobe(nDotH, coatRoughness) * mx_fresnel_schlick(vDotH, coatF0) * film;
   let sheenTerm = sheenWeight * sheenColor * pow(1.0 - nDotV, mix(6.0, 1.4, sheenRoughness)) * 0.32;
   let subsurfaceTerm = subsurfaceWeight * subsurfaceColor * (0.1 + 0.42 * pow(1.0 - nDotV, 2.0));
   let tangentGlint = vec3<f32>(pow(tDotH, 36.0)) * coatWeight * film * 0.06;
