@@ -29,11 +29,12 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 - [x] Keep lab-only direct light direction in the binding 7 light-data placeholder instead of adding it to private uniforms.
 - [x] Add `npm run verify:webgpu` for Chrome-based direct WebGPU validation on port `8080`.
 - [x] Add a generated fragment-source contract probe for the standard-surface function signature and generated `main()` call argument order.
+- [x] Reshape the browser WGSL fragment bridge around a generated-style `NG_standard_surface_surfaceshader_100` call.
 
 ## In Progress
 
 - [ ] Phase 3 direct WebGPU bridge.
-  - Status: binding contract is active; generated fragment source is validated for the expected standard-surface shape; fragment shader translation remains open.
+  - Status: binding contract is active; generated fragment source is validated for the expected standard-surface shape; the browser WGSL fragment path now mirrors the generated outer `main()` to standard-surface call flow; full closure-function translation remains open.
   - Next decision: hand-port the smallest useful generated standard-surface slice, build a tiny translator for the observed Vulkan-style GLSL subset, or defer until upstream emits browser WGSL.
 
 - [ ] Performance comparison against the WebGL viewer.

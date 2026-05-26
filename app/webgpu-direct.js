@@ -228,6 +228,9 @@ const generatedPixelFunctionParameters = [
   'tangent',
   'out1',
 ];
+const standardSurfaceBridgeParameters = createStandardSurfaceBridgeParameters();
+const standardSurfaceBridgeSource = createStandardSurfaceBridgeSource();
+const fragmentBridgeMainSource = createFragmentBridgeMainSource();
 
 const baseMaterialPorts = {
   base: 1,
@@ -375,98 +378,9 @@ fn saturate(value: f32) -> f32 {
 
 ${materialAccessorSource}
 
-fn iorToF0(ior: f32) -> f32 {
-  let ratio = (ior - 1.0) / (ior + 1.0);
-  return ratio * ratio;
-}
+${standardSurfaceBridgeSource}
 
-fn fresnelSchlick(cosTheta: f32, f0: vec3<f32>) -> vec3<f32> {
-  return f0 + (vec3<f32>(1.0) - f0) * pow(1.0 - saturate(cosTheta), 5.0);
-}
-
-fn specularLobe(nDotH: f32, roughness: f32) -> f32 {
-  let power = mix(192.0, 8.0, saturate(roughness));
-  return pow(saturate(nDotH), power) * mix(1.0, 0.22, saturate(roughness));
-}
-
-fn thinFilmTint(thickness: f32, coatWeight: f32) -> vec3<f32> {
-  let strength = saturate(thickness / 700.0) * saturate(coatWeight);
-  let phase = vec3<f32>(0.0, 2.0943951, 4.1887902) + thickness * 0.018;
-  let tint = vec3<f32>(0.64) + 0.36 * cos(phase);
-  return vec3<f32>(1.0) * (1.0 - strength) + tint * strength;
-}
-
-@fragment
-fn fragmentMain(input: VertexOutput) -> @location(0) vec4<f32> {
-  let normal = normalize(input.normal);
-  let tangent = normalize(input.tangent);
-  let viewDirection = normalize(u_privatePixel.u_viewPosition - input.worldPosition);
-  let lightDirection = normalize(-u_lightData.lightDirection.xyz);
-  let halfVector = normalize(lightDirection + viewDirection);
-  let base = materialFloat(0u);
-  let baseColor = max(materialColor(1u) * base, vec3<f32>(0.0));
-  let diffuseRoughness = saturate(materialFloat(2u));
-  let metalness = saturate(materialFloat(3u));
-  let specular = saturate(materialFloat(4u));
-  let specularColor = max(materialColor(5u), vec3<f32>(0.0));
-  let specularRoughness = clamp(materialFloat(6u), 0.04, 1.0);
-  let specularIor = max(materialFloat(7u), 1.01);
-  let transmission = saturate(materialFloat(10u));
-  let transmissionColor = max(materialColor(11u), vec3<f32>(0.0));
-  let subsurface = saturate(materialFloat(17u));
-  let subsurfaceColor = max(materialColor(18u), vec3<f32>(0.0));
-  let sheen = saturate(materialFloat(22u));
-  let sheenColor = max(materialColor(23u), vec3<f32>(0.0));
-  let sheenRoughness = saturate(materialFloat(24u));
-  let coat = saturate(materialFloat(25u));
-  let coatColor = max(materialColor(26u), vec3<f32>(0.0));
-  let coatRoughness = clamp(materialFloat(27u), 0.03, 1.0);
-  let coatIor = max(materialFloat(30u), 1.01);
-  let coatAffectColor = saturate(materialFloat(31u));
-  let coatAffectRoughness = saturate(materialFloat(32u));
-  let thinFilmThickness = max(materialFloat(33u), 0.0);
-  let emission = max(materialFloat(35u), 0.0);
-  let emissionColor = max(materialColor(36u), vec3<f32>(0.0));
-  let opacity = saturate(dot(materialColor(37u), vec3<f32>(0.272229, 0.674082, 0.053689)));
-  let envIntensity = u_privatePixel.u_envLightIntensity;
-  let activeLightCount = f32(u_privatePixel.u_numActiveLightSources);
-  let nDotL = saturate(dot(normal, lightDirection));
-  let nDotH = saturate(dot(normal, halfVector));
-  let nDotV = saturate(dot(normal, viewDirection));
-  let vDotH = saturate(dot(viewDirection, halfVector));
-  let tDotH = abs(dot(tangent, halfVector));
-  let irradiance = textureSample(u_envIrradianceTexture, u_envIrradianceSampler, vec2<f32>(0.5, 0.5)).rgb * envIntensity;
-  let radiance = textureSample(u_envRadianceTexture, u_envRadianceSampler, vec2<f32>(0.5, 0.5)).rgb * envIntensity;
-  let directMask = max(activeLightCount, 1.0);
-  let transmissionMix = transmission * 0.35;
-  let diffuseColor = baseColor * (1.0 - transmissionMix) + transmissionColor * transmissionMix;
-  let coatGamma = 1.0 + coat * coatAffectColor;
-  let coatAffectedDiffuse = pow(max(diffuseColor, vec3<f32>(0.0)), vec3<f32>(coatGamma));
-  let diffuseLight = vec3<f32>(0.12 + nDotL * mix(0.82, 0.58, diffuseRoughness) * directMask) + irradiance * 0.28;
-  let diffuse = coatAffectedDiffuse * diffuseLight * (1.0 - metalness);
-  let dielectricF0 = vec3<f32>(iorToF0(specularIor)) * specularColor * specular;
-  let f0 = dielectricF0 * (1.0 - metalness) + baseColor * metalness;
-  let specularFresnel = fresnelSchlick(vDotH, f0);
-  let specularTerm = specularLobe(nDotH, mix(specularRoughness, 1.0, coat * coatAffectRoughness));
-  let envSpecular = radiance * fresnelSchlick(nDotV, f0) * mix(0.35, 0.08, specularRoughness);
-  let coatF0 = vec3<f32>(iorToF0(coatIor)) * coatColor;
-  let film = thinFilmTint(thinFilmThickness, coat);
-  let coatTerm = coat * specularLobe(nDotH, coatRoughness) * fresnelSchlick(vDotH, coatF0) * film;
-  let sheenTerm = sheen * sheenColor * pow(1.0 - nDotV, mix(6.0, 1.4, sheenRoughness)) * 0.32;
-  let subsurfaceTerm = subsurface * subsurfaceColor * (0.1 + 0.42 * pow(1.0 - nDotV, 2.0));
-  let tangentGlint = vec3<f32>(pow(tDotH, 36.0)) * coat * film * 0.06;
-  let emissionTerm = emission * emissionColor;
-  let color = diffuse
-    + specularFresnel * specularTerm * (0.45 + nDotL * 1.6)
-    + envSpecular
-    + coatTerm * (0.8 + nDotL * 1.35)
-    + sheenTerm
-    + subsurfaceTerm
-    + tangentGlint
-    + emissionTerm;
-  let gammaCorrected = pow(max(color * opacity, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.2));
-  return vec4<f32>(gammaCorrected, 1.0);
-}
+${fragmentBridgeMainSource}
 `;
 
 const viewState = {
@@ -607,6 +521,164 @@ fn materialColor(index: u32) -> vec3<f32> {
 ${colorCases}
     default: { return vec3<f32>(materialFloat(index)); }
   }
+}`;
+}
+
+function createStandardSurfaceBridgeParameters() {
+  const publicParameter = port => ({
+    expression: port.type === 'integer' ? `u_public.${port.field} != 0` : `u_public.${port.field}`,
+    name: port.field,
+    wgsl: port.type === 'integer' ? 'bool' : port.wgsl,
+  });
+  return [
+    ...materialUniformLayout.ports
+      .slice(0, materialPortIndex.coatAffectColor)
+      .map(publicParameter),
+    {
+      expression: 'geomprop_Nworld_out',
+      name: 'coat_normal',
+      wgsl: 'vec3<f32>',
+    },
+    ...materialUniformLayout.ports
+      .slice(materialPortIndex.coatAffectColor)
+      .map(publicParameter),
+    {
+      expression: 'geomprop_Nworld_out',
+      name: 'normal',
+      wgsl: 'vec3<f32>',
+    },
+    {
+      expression: 'geomprop_Tworld_out',
+      name: 'tangent',
+      wgsl: 'vec3<f32>',
+    },
+    {
+      expression: 'input.worldPosition',
+      name: 'position_world',
+      wgsl: 'vec3<f32>',
+    },
+  ];
+}
+
+function createStandardSurfaceBridgeSource() {
+  const parameters = standardSurfaceBridgeParameters
+    .map(parameter => `  ${parameter.name}: ${parameter.wgsl}`)
+    .join(',\n');
+
+  return `struct SurfaceShader {
+  color: vec3<f32>,
+  transparency: vec3<f32>,
+};
+
+fn iorToF0(ior: f32) -> f32 {
+  let ratio = (ior - 1.0) / (ior + 1.0);
+  return ratio * ratio;
+}
+
+fn fresnelSchlick(cosTheta: f32, f0: vec3<f32>) -> vec3<f32> {
+  return f0 + (vec3<f32>(1.0) - f0) * pow(1.0 - saturate(cosTheta), 5.0);
+}
+
+fn specularLobe(nDotH: f32, roughness: f32) -> f32 {
+  let power = mix(192.0, 8.0, saturate(roughness));
+  return pow(saturate(nDotH), power) * mix(1.0, 0.22, saturate(roughness));
+}
+
+fn thinFilmTint(thickness: f32, coatWeight: f32) -> vec3<f32> {
+  let strength = saturate(thickness / 700.0) * saturate(coatWeight);
+  let phase = vec3<f32>(0.0, 2.0943951, 4.1887902) + thickness * 0.018;
+  let tint = vec3<f32>(0.64) + 0.36 * cos(phase);
+  return vec3<f32>(1.0) * (1.0 - strength) + tint * strength;
+}
+
+fn ${generatedStandardSurfaceFunctionName}(
+${parameters}
+) -> SurfaceShader {
+  let shadingNormal = normalize(normal);
+  let shadingTangent = normalize(tangent);
+  let viewDirection = normalize(u_privatePixel.u_viewPosition - position_world);
+  let lightDirection = normalize(-u_lightData.lightDirection.xyz);
+  let halfVector = normalize(lightDirection + viewDirection);
+  let baseColor = max(base_color * base, vec3<f32>(0.0));
+  let diffuseRoughness = saturate(diffuse_roughness);
+  let metalnessWeight = saturate(metalness);
+  let specularWeight = saturate(specular);
+  let specularColor = max(specular_color, vec3<f32>(0.0));
+  let specularRoughness = clamp(specular_roughness, 0.04, 1.0);
+  let specularIor = max(specular_IOR, 1.01);
+  let transmissionWeight = saturate(transmission);
+  let transmissionColor = max(transmission_color, vec3<f32>(0.0));
+  let subsurfaceWeight = saturate(subsurface);
+  let subsurfaceColor = max(subsurface_color, vec3<f32>(0.0));
+  let sheenWeight = saturate(sheen);
+  let sheenColor = max(sheen_color, vec3<f32>(0.0));
+  let sheenRoughness = saturate(sheen_roughness);
+  let coatWeight = saturate(coat);
+  let coatColor = max(coat_color, vec3<f32>(0.0));
+  let coatRoughness = clamp(coat_roughness, 0.03, 1.0);
+  let coatIor = max(coat_IOR, 1.01);
+  let coatAffectColor = saturate(coat_affect_color);
+  let coatAffectRoughness = saturate(coat_affect_roughness);
+  let thinFilmThickness = max(thin_film_thickness, 0.0);
+  let emissionWeight = max(emission, 0.0);
+  let emissionColor = max(emission_color, vec3<f32>(0.0));
+  let surfaceOpacity = saturate(dot(opacity, vec3<f32>(0.272229, 0.674082, 0.053689)));
+  let envIntensity = u_privatePixel.u_envLightIntensity;
+  let activeLightCount = f32(u_privatePixel.u_numActiveLightSources);
+  let nDotL = saturate(dot(shadingNormal, lightDirection));
+  let nDotH = saturate(dot(shadingNormal, halfVector));
+  let nDotV = saturate(dot(shadingNormal, viewDirection));
+  let vDotH = saturate(dot(viewDirection, halfVector));
+  let tDotH = abs(dot(shadingTangent, halfVector));
+  let irradiance = textureSample(u_envIrradianceTexture, u_envIrradianceSampler, vec2<f32>(0.5, 0.5)).rgb * envIntensity;
+  let radiance = textureSample(u_envRadianceTexture, u_envRadianceSampler, vec2<f32>(0.5, 0.5)).rgb * envIntensity;
+  let directMask = max(activeLightCount, 1.0);
+  let transmissionMix = transmissionWeight * 0.35;
+  let diffuseColor = baseColor * (1.0 - transmissionMix) + transmissionColor * transmissionMix;
+  let coatGamma = 1.0 + coatWeight * coatAffectColor;
+  let coatAffectedDiffuse = pow(max(diffuseColor, vec3<f32>(0.0)), vec3<f32>(coatGamma));
+  let diffuseLight = vec3<f32>(0.12 + nDotL * mix(0.82, 0.58, diffuseRoughness) * directMask) + irradiance * 0.28;
+  let diffuse = coatAffectedDiffuse * diffuseLight * (1.0 - metalnessWeight);
+  let dielectricF0 = vec3<f32>(iorToF0(specularIor)) * specularColor * specularWeight;
+  let f0 = dielectricF0 * (1.0 - metalnessWeight) + baseColor * metalnessWeight;
+  let specularFresnel = fresnelSchlick(vDotH, f0);
+  let specularTerm = specularLobe(nDotH, mix(specularRoughness, 1.0, coatWeight * coatAffectRoughness));
+  let envSpecular = radiance * fresnelSchlick(nDotV, f0) * mix(0.35, 0.08, specularRoughness);
+  let coatF0 = vec3<f32>(iorToF0(coatIor)) * coatColor;
+  let film = thinFilmTint(thinFilmThickness, coatWeight);
+  let coatTerm = coatWeight * specularLobe(nDotH, coatRoughness) * fresnelSchlick(vDotH, coatF0) * film;
+  let sheenTerm = sheenWeight * sheenColor * pow(1.0 - nDotV, mix(6.0, 1.4, sheenRoughness)) * 0.32;
+  let subsurfaceTerm = subsurfaceWeight * subsurfaceColor * (0.1 + 0.42 * pow(1.0 - nDotV, 2.0));
+  let tangentGlint = vec3<f32>(pow(tDotH, 36.0)) * coatWeight * film * 0.06;
+  let emissionTerm = emissionWeight * emissionColor;
+  let color = diffuse
+    + specularFresnel * specularTerm * (0.45 + nDotL * 1.6)
+    + envSpecular
+    + coatTerm * (0.8 + nDotL * 1.35)
+    + sheenTerm
+    + subsurfaceTerm
+    + tangentGlint
+    + emissionTerm;
+  let transparency = select(vec3<f32>(0.0), vec3<f32>(1.0 - surfaceOpacity), thin_walled);
+  return SurfaceShader(color * surfaceOpacity, transparency);
+}
+`;
+}
+
+function createFragmentBridgeMainSource() {
+  const callArguments = standardSurfaceBridgeParameters
+    .map(parameter => `    ${parameter.expression}`)
+    .join(',\n');
+  return `@fragment
+fn fragmentMain(input: VertexOutput) -> @location(0) vec4<f32> {
+  let geomprop_Nworld_out = normalize(input.normal);
+  let geomprop_Tworld_out = normalize(input.tangent);
+  let SR_bridge_out = ${generatedStandardSurfaceFunctionName}(
+${callArguments}
+  );
+  let gammaCorrected = pow(max(SR_bridge_out.color, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.2));
+  let out1 = vec4<f32>(gammaCorrected, 1.0);
+  return out1;
 }`;
 }
 
