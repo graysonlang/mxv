@@ -14,6 +14,7 @@ export function getFilePaths() {
 const defaultGeometry = 'vendor/MaterialX/resources/Geometry/shaderball.glb';
 const defaultEnvironment = 'vendor/MaterialX/resources/Lights/san_giuseppe_bridge_split.hdr';
 const runtimeBaseUrl = new URL('./vendor/materialx-runtime/', import.meta.url);
+const nagaShaderBaseUrl = new URL('./vendor/naga-materialx/', import.meta.url);
 const appStartTime = performance.now();
 const cameraFov = 60 * Math.PI / 180;
 const cameraNear = 0.05;
@@ -23,6 +24,12 @@ const initialDistance = sphereRadius * 2;
 const maxPixelRatio = 2;
 const depthFormat = 'depth24plus';
 const queryParams = new URLSearchParams(document.location.search);
+const shaderModeLabels = {
+  bridge: 'Bridge',
+  naga: 'Naga WGSL',
+};
+const requestedShaderMode = queryParams.get('shader') || queryParams.get('shaderMode');
+let activeShaderMode = Object.hasOwn(shaderModeLabels, requestedShaderMode) ? requestedShaderMode : 'bridge';
 const privateVertexFloatCount = 48;
 const privatePixelByteLength = 96;
 const lightDataFloatCount = 4;
@@ -1832,16 +1839,26 @@ function createDepthTexture(device, dimensions) {
 
 async function createPipeline(device, format, options = {}) {
   const {
+    fragmentEntryPoint = 'fragmentMain',
+    fragmentSource = options.source || shaderSource,
     label = 'Direct WebGPU proof shader',
     source = shaderSource,
+    vertexEntryPoint = 'vertexMain',
+    vertexSource = source,
   } = options;
   device.pushErrorScope('validation');
   try {
     const moduleStart = performance.now();
-    const shaderModule = device.createShaderModule({
-      code: source,
-      label,
+    const vertexModule = device.createShaderModule({
+      code: vertexSource,
+      label: `${label} vertex`,
     });
+    const fragmentModule = fragmentSource === vertexSource
+      ? vertexModule
+      : device.createShaderModule({
+          code: fragmentSource,
+          label: `${label} fragment`,
+        });
     setMetric('shaderModule', formatDuration(performance.now() - moduleStart));
 
     const start = performance.now();
@@ -1852,8 +1869,8 @@ async function createPipeline(device, format, options = {}) {
         format: depthFormat,
       },
       fragment: {
-        entryPoint: 'fragmentMain',
-        module: shaderModule,
+        entryPoint: fragmentEntryPoint,
+        module: fragmentModule,
         targets: [{ format }],
       },
       label: label.replace(/\bshader\b/i, 'pipeline'),
@@ -1874,8 +1891,8 @@ async function createPipeline(device, format, options = {}) {
             ],
           },
         ],
-        entryPoint: 'vertexMain',
-        module: shaderModule,
+        entryPoint: vertexEntryPoint,
+        module: vertexModule,
       },
     });
     const error = await device.popErrorScope();
@@ -2041,7 +2058,106 @@ function writeMaterialUniforms(publicUniformData, materialId) {
   return sample;
 }
 
-function bindMaterialSelect(device, publicUniformBuffer, publicUniformData) {
+function updateQueryParam(name, value) {
+  const nextUrl = new URL(document.location.href);
+  nextUrl.searchParams.set(name, value);
+  history.replaceState(null, '', nextUrl);
+}
+
+function bindShaderModeSelect(onModeChanged) {
+  const select = document.getElementById('shader-mode');
+  if (!select) {
+    return {
+      refresh: () => {},
+    };
+  }
+
+  const refresh = () => {
+    select.value = activeShaderMode;
+  };
+
+  select.addEventListener('change', () => {
+    activeShaderMode = Object.hasOwn(shaderModeLabels, select.value) ? select.value : 'bridge';
+    updateQueryParam('shader', activeShaderMode);
+    const result = onModeChanged?.(activeShaderMode);
+    if (result && typeof result.catch === 'function') {
+      result.catch((error) => {
+        console.warn('Shader mode update failed.', error);
+        setMetric('shaderNotes', error?.message || String(error));
+      });
+    }
+  });
+
+  refresh();
+  return {
+    refresh,
+  };
+}
+
+async function fetchTextResource(url, label) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`${label} unavailable (${response.status}). Run npm run spike:naga, then npm run build or refresh the dev server.`);
+  }
+  return response.text();
+}
+
+async function loadNagaShaderPair(materialId) {
+  const sampleId = Object.hasOwn(materialSamples, materialId) ? materialId : 'standard';
+  const baseUrl = new URL(`${encodeURIComponent(sampleId)}/`, nagaShaderBaseUrl);
+  const [vertexSource, fragmentSource] = await Promise.all([
+    fetchTextResource(new URL('vertex.wgsl', baseUrl), `${sampleId} Naga vertex WGSL`),
+    fetchTextResource(new URL('pixel.wgsl', baseUrl), `${sampleId} Naga pixel WGSL`),
+  ]);
+
+  return {
+    fragmentLineCount: fragmentSource.split('\n').length,
+    fragmentSource,
+    sampleId,
+    vertexLineCount: vertexSource.split('\n').length,
+    vertexSource,
+  };
+}
+
+async function createNagaPipeline(device, format, materialId) {
+  const loadStart = performance.now();
+  const loaded = await loadNagaShaderPair(materialId);
+  setMetric('shaderSource', `Naga ${loaded.vertexLineCount}v / ${loaded.fragmentLineCount}p lines`);
+
+  const pipeline = await createPipeline(device, format, {
+    fragmentEntryPoint: 'main',
+    fragmentSource: loaded.fragmentSource,
+    label: `Direct WebGPU Naga ${loaded.sampleId} shader`,
+    vertexEntryPoint: 'main',
+    vertexSource: loaded.vertexSource,
+  });
+
+  setMetric('shaderTarget', 'Naga WGSL');
+  setMetric('vertexAdapter', `Naga ${loaded.vertexLineCount} WGSL lines`);
+  setMetric('fragmentAdapter', `Naga ${loaded.fragmentLineCount} WGSL lines`);
+  setMetric('fragmentTranslator', `Naga fixture / ${formatDuration(performance.now() - loadStart)}`);
+  setMetric('shaderNotes', materialXKnownWarnings.size ? 'bool uniform mapped / Naga translated' : 'Naga translated');
+  return pipeline;
+}
+
+function updateBridgeShaderMetrics(sample) {
+  if (!sample || sample.source !== 'shadergen') {
+    setMetric('shaderTarget', 'Wgsl bridge');
+    setMetric('shaderSource', 'bridge fallback');
+    setMetric('fragmentAdapter', 'bridge fallback');
+    setMetric('fragmentTranslator', 'bridge fallback');
+    return;
+  }
+
+  setMetric('shaderTarget', sample.target || 'genglsl');
+  setMetric('shaderSource', `${sample.vertexLines}v / ${sample.pixelLines}p lines`);
+  setMetric('fragmentAdapter', `${sample.pixelContract.portedHelperCount}/${sample.pixelContract.functionCount} funcs / ${sample.pixelContract.standardSurfaceParameterCount} params`);
+  setMetric('fragmentTranslator', `${sample.pixelContract.translatedFragment.translatedCount}/${sample.pixelContract.translatedFragment.requestedCount} translated`);
+  setMetric('shaderNotes', materialXKnownWarnings.size ? 'bool uniform mapped' : 'none');
+}
+
+function bindMaterialSelect(device, publicUniformBuffer, publicUniformData, options = {}) {
+  const { onMaterialApplied = null } = options;
   const select = document.getElementById('material-sample');
   if (!select) {
     return {
@@ -2068,6 +2184,13 @@ function bindMaterialSelect(device, publicUniformBuffer, publicUniformData) {
     device.queue.writeBuffer(publicUniformBuffer, 0, publicUniformData.bytes);
     setMetric('materialUpload', formatDuration(performance.now() - uploadStart));
     setMetric('material', `${sample.label} (${sample.source})`);
+    const callbackResult = onMaterialApplied?.(activeMaterialId, sample, options);
+    if (callbackResult && typeof callbackResult.catch === 'function') {
+      callbackResult.catch((error) => {
+        console.warn('Material pipeline update failed.', error);
+        setMetric('shaderNotes', error?.message || String(error));
+      });
+    }
 
     if (measure) {
       pendingMaterialSwitch = {
@@ -2077,9 +2200,7 @@ function bindMaterialSelect(device, publicUniformBuffer, publicUniformData) {
     }
 
     if (updateUrl) {
-      const nextUrl = new URL(document.location.href);
-      nextUrl.searchParams.set('material', activeMaterialId);
-      history.replaceState(null, '', nextUrl);
+      updateQueryParam('material', activeMaterialId);
     }
   };
 
@@ -2211,6 +2332,7 @@ async function main() {
   const format = navigator.gpu.getPreferredCanvasFormat();
   let dimensions = configureCanvas(canvas, device, context, format);
   let depthTexture = createDepthTexture(device, dimensions);
+  let bridgeShaderSource = shaderSource;
   let pipeline = await createPipeline(device, format);
 
   const meshStart = performance.now();
@@ -2239,7 +2361,6 @@ async function main() {
   });
   device.queue.writeBuffer(lightDataBuffer, 0, lightData);
   setMetric('contract', `bindings 0-7 / private ${privatePixelByteLength} B`);
-  const materialControl = bindMaterialSelect(device, publicUniformBuffer, publicUniformData);
   const bindGroupResources = {
     ...environmentTextures,
     envSampler,
@@ -2249,16 +2370,52 @@ async function main() {
     publicUniformBuffer,
   };
   let bindGroup = createDirectBindGroup(device, pipeline, bindGroupResources);
+  let pipelineSwitchId = 0;
+  const applyPipelineForShaderMode = async (materialId, options = {}) => {
+    const switchId = ++pipelineSwitchId;
+    const material = materialSamples[materialId] || materialSamples.standard;
+    if (options.requireShadergen && material?.source !== 'shadergen') return;
+
+    setStatus(activeShaderMode === 'naga' ? 'Loading Naga WGSL shader' : 'Loading bridge shader');
+    let nextPipeline;
+    if (activeShaderMode === 'naga') {
+      nextPipeline = await createNagaPipeline(device, format, materialId);
+    } else {
+      nextPipeline = await createPipeline(device, format, {
+        label: 'Direct WebGPU generated vertex bridge shader',
+        source: bridgeShaderSource,
+      });
+      updateBridgeShaderMetrics(material);
+    }
+    if (switchId !== pipelineSwitchId) return;
+
+    pipeline = nextPipeline;
+    bindGroup = createDirectBindGroup(device, pipeline, bindGroupResources);
+    setStatus('Ready');
+  };
+  bindShaderModeSelect(() => applyPipelineForShaderMode(activeMaterialId, { requireShadergen: activeShaderMode === 'naga' }));
+  const materialControl = bindMaterialSelect(device, publicUniformBuffer, publicUniformData, {
+    onMaterialApplied: (materialId, sample, options = {}) => {
+      if (activeShaderMode !== 'naga' || sample.source !== 'shadergen') return null;
+      return applyPipelineForShaderMode(materialId, {
+        requireShadergen: true,
+        switchReason: options.measure ? 'material' : 'refresh',
+      });
+    },
+  });
   const pipelineControl = {
     applyGeneratedVertexSource: async (generatedVertexSource) => {
       const adapterStart = performance.now();
       const adapted = adaptGeneratedVertexSource(generatedVertexSource);
       const adapterDuration = performance.now() - adapterStart;
-      pipeline = await createPipeline(device, format, {
-        label: 'Direct WebGPU generated vertex bridge shader',
-        source: adapted.shaderSource,
-      });
-      bindGroup = createDirectBindGroup(device, pipeline, bindGroupResources);
+      bridgeShaderSource = adapted.shaderSource;
+      if (activeShaderMode === 'bridge') {
+        pipeline = await createPipeline(device, format, {
+          label: 'Direct WebGPU generated vertex bridge shader',
+          source: bridgeShaderSource,
+        });
+        bindGroup = createDirectBindGroup(device, pipeline, bindGroupResources);
+      }
       setMetric('vertexAdapter', `${adapted.lineCount} GLSL -> WGSL / ${formatDuration(adapterDuration)}`);
     },
     validateGeneratedFragmentTranslation: generatedFragmentWgsl => validateGeneratedFragmentTranslation(device, generatedFragmentWgsl),

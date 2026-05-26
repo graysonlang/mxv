@@ -128,7 +128,7 @@ cargo install naga-cli --root vendor/.cache/naga-cli
 npm run spike:naga
 ```
 
-The spike writes translated WGSL to `vendor/.cache/naga-materialx`, also ignored by git. Set `MXV_NAGA=/path/to/naga` to use another Naga binary.
+The spike writes translated WGSL to `vendor/.cache/naga-materialx`, also ignored by git. Builds copy those cached WGSL fixtures into `dist/vendor/naga-materialx` when they are present. Set `MXV_NAGA=/path/to/naga` to use another Naga binary.
 
 Browser-verify the generated Naga WGSL with Chrome/WebGPU:
 
@@ -178,10 +178,11 @@ http://127.0.0.1:8000/webgpu.html
 http://127.0.0.1:8000/webgpu-direct.html
 ```
 
-The direct WebGPU page loads the MaterialX shaderball and the `San Giuseppe Bridge Split` HDR environment by default. It also accepts `material` and `environment` query params for focused shader-bridge checks:
+The direct WebGPU page loads the MaterialX shaderball and the `San Giuseppe Bridge Split` HDR environment by default. It also accepts `material`, `shader`, and `environment` query params for focused shader-bridge checks:
 
 ```text
 http://127.0.0.1:8000/webgpu-direct.html?material=pearl
+http://127.0.0.1:8000/webgpu-direct.html?material=standard&shader=naga
 http://127.0.0.1:8000/webgpu-direct.html?material=brushedMetal&environment=vendor/MaterialX/resources/Lights/table_mountain_split.hdr
 ```
 

@@ -322,12 +322,13 @@ The spike now includes the first deliberately tiny generated GLSL-to-WGSL transl
 
 Naga is now the preferred next translation probe. `npm run spike:naga` regenerates the cached MaterialX shader fixtures, applies a small bool-uniform pre-pass for MaterialX aliases such as `#define thin_walled bool(thin_walled)`, applies a narrow derivative-free fallback for the generated subsurface radius path that otherwise trips Chrome's `fwidth` uniformity analysis, and invokes `naga-cli` on every generated vertex and pixel shader. With `naga-cli v29.0.3`, all six current samples convert successfully to WGSL: each vertex stage is about 207 lines and each full pixel stage is about 5007 lines.
 
-`npm run verify:naga-wgsl` browser-verifies those Naga WGSL outputs with Chrome/WebGPU. With the current pre-passes, all generated vertex and pixel modules compile as browser WGSL shader modules, the generated bindings and entry points match the direct WebGPU harness, and all six translated samples compile as render pipelines with the explicit MaterialX bind group layout. This still leaves actual drawing and rendered fidelity unproven; the subsurface-radius pre-pass is a deliberate spike compromise, not a claim that the translated shader is visually equivalent to the desktop viewer.
+`npm run verify:naga-wgsl` browser-verifies those Naga WGSL outputs with Chrome/WebGPU. With the current pre-passes, all generated vertex and pixel modules compile as browser WGSL shader modules, the generated bindings and entry points match the direct WebGPU harness, and all six translated samples compile as render pipelines with the explicit MaterialX bind group layout. The direct WebGPU page can now switch to those generated fixtures with `shader=naga`; this draws the shaderball with the translated vertex and pixel modules while reusing the direct page's mesh buffers, MaterialX-shaped uniform buffers, and HDR environment textures. The subsurface-radius pre-pass remains a deliberate spike compromise, not a claim that the translated shader is visually equivalent to the desktop viewer.
 
 The direct page includes a material selector for the generated coverage sample values, and accepts the same state through the URL:
 
 ```text
 http://127.0.0.1:8000/webgpu-direct.html?material=standard
+http://127.0.0.1:8000/webgpu-direct.html?material=standard&shader=naga
 http://127.0.0.1:8000/webgpu-direct.html?material=pearl
 http://127.0.0.1:8000/webgpu-direct.html?material=brushedMetal
 http://127.0.0.1:8000/webgpu-direct.html?material=smokedGlass

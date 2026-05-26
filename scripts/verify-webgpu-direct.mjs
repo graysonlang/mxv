@@ -15,15 +15,17 @@ for (const arg of process.argv.slice(2)) {
 }
 
 if (args.has('help')) {
-  console.log(`Usage: npm run verify:webgpu -- [--url=${defaultUrl}] [--expected-material="Pearl (shadergen)"] [--expected-environment="San Giuseppe Bridge Split"] [--headed] [--timeout=20000]`);
+  console.log(`Usage: npm run verify:webgpu -- [--url=${defaultUrl}] [--expected-material="Pearl (shadergen)"] [--expected-environment="San Giuseppe Bridge Split"] [--expected-shader=bridge|naga] [--headed] [--timeout=20000]`);
   console.log('');
   console.log('Start the dev server separately, for example: npm run serve -- --port=8080');
   process.exit(0);
 }
 
 const targetUrl = String(args.get('url') || process.env.MXV_VERIFY_URL || defaultUrl);
+const targetUrlSearchParams = new URL(targetUrl).searchParams;
 const expectedMaterial = String(args.get('expected-material') || process.env.MXV_VERIFY_EXPECTED_MATERIAL || 'Pearl (shadergen)');
 const expectedEnvironment = String(args.get('expected-environment') || process.env.MXV_VERIFY_EXPECTED_ENVIRONMENT || 'San Giuseppe Bridge Split');
+const expectedShader = String(args.get('expected-shader') || process.env.MXV_VERIFY_EXPECTED_SHADER || targetUrlSearchParams.get('shader') || 'bridge');
 const timeoutMs = Number(args.get('timeout') || process.env.MXV_VERIFY_TIMEOUT || 20_000);
 const headed = args.has('headed') || process.env.MXV_VERIFY_HEADFUL === '1';
 const screenshotPath = path.resolve(String(args.get('screenshot') || process.env.MXV_VERIFY_SCREENSHOT || defaultScreenshot));
@@ -240,6 +242,8 @@ async function pollPageState(client) {
         renderer: metric('renderer'),
         shaderContract: metric('shaderContract'),
         shaderModule: metric('shaderModule'),
+        shaderSource: metric('shaderSource'),
+        shaderTarget: metric('shaderTarget'),
         vertexAdapter: metric('vertexAdapter'),
       },
       status: text('[data-status]'),
@@ -261,14 +265,30 @@ function validateReadyState(state) {
   if (metrics.shaderContract !== '39 public ports / 288 B') {
     failures.push(`shader contract is ${metrics.shaderContract || '<blank>'}`);
   }
-  if (!/GLSL -> WGSL/.test(metrics.vertexAdapter)) {
-    failures.push(`vertex adapter is ${metrics.vertexAdapter || '<blank>'}`);
-  }
-  if (!/\d+\/\d+ funcs \/ \d+ params/.test(metrics.fragmentAdapter)) {
-    failures.push(`fragment adapter is ${metrics.fragmentAdapter || '<blank>'}`);
-  }
-  if (!/\d+\/\d+ translated/.test(metrics.fragmentTranslator)) {
-    failures.push(`fragment translator is ${metrics.fragmentTranslator || '<blank>'}`);
+  if (expectedShader === 'naga') {
+    if (metrics.shaderTarget !== 'Naga WGSL') failures.push(`shader target is ${metrics.shaderTarget || '<blank>'}`);
+    if (!/^Naga \d+v \/ \d+p lines$/.test(metrics.shaderSource)) {
+      failures.push(`shader source is ${metrics.shaderSource || '<blank>'}`);
+    }
+    if (!/^Naga \d+ WGSL lines$/.test(metrics.vertexAdapter)) {
+      failures.push(`vertex adapter is ${metrics.vertexAdapter || '<blank>'}`);
+    }
+    if (!/^Naga \d+ WGSL lines$/.test(metrics.fragmentAdapter)) {
+      failures.push(`fragment adapter is ${metrics.fragmentAdapter || '<blank>'}`);
+    }
+    if (!/^Naga fixture/.test(metrics.fragmentTranslator)) {
+      failures.push(`fragment translator is ${metrics.fragmentTranslator || '<blank>'}`);
+    }
+  } else {
+    if (!/GLSL -> WGSL/.test(metrics.vertexAdapter)) {
+      failures.push(`vertex adapter is ${metrics.vertexAdapter || '<blank>'}`);
+    }
+    if (!/\d+\/\d+ funcs \/ \d+ params/.test(metrics.fragmentAdapter)) {
+      failures.push(`fragment adapter is ${metrics.fragmentAdapter || '<blank>'}`);
+    }
+    if (!/\d+\/\d+ translated/.test(metrics.fragmentTranslator)) {
+      failures.push(`fragment translator is ${metrics.fragmentTranslator || '<blank>'}`);
+    }
   }
   if (!metrics.firstFrame || metrics.firstFrame === '-') failures.push('first frame metric did not populate');
   if (!state.fps || state.fps === '-') failures.push('fps metric did not populate');
@@ -345,6 +365,8 @@ async function main() {
     console.log(`  material: ${state.metrics.material}`);
     console.log(`  environment: ${state.metrics.environment}`);
     console.log(`  shader contract: ${state.metrics.shaderContract}`);
+    console.log(`  shader target: ${state.metrics.shaderTarget}`);
+    console.log(`  shader source: ${state.metrics.shaderSource}`);
     console.log(`  vertex adapter: ${state.metrics.vertexAdapter}`);
     console.log(`  fragment adapter: ${state.metrics.fragmentAdapter}`);
     console.log(`  fragment translator: ${state.metrics.fragmentTranslator}`);

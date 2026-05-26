@@ -16,6 +16,7 @@ const materialXResourceExtensions = new Set([
   '.tga',
 ]);
 const runtimeExtensions = new Set(['.data', '.js', '.wasm']);
+const nagaShaderExtensions = new Set(['.wgsl']);
 const requiredRuntimeFiles = [
   'JsMaterialXGenShader.data',
   'JsMaterialXGenShader.js',
@@ -23,6 +24,7 @@ const requiredRuntimeFiles = [
 ];
 const materialXResourceRoot = 'vendor/MaterialX/resources';
 const materialXViewerAssetRoot = 'vendor/MaterialX/javascript/MaterialXView/public';
+const nagaShaderRoot = 'vendor/.cache/naga-materialx';
 
 async function exists(filePath) {
   try {
@@ -156,6 +158,25 @@ async function copyViewerAssets(root, outdir) {
   return copied.sort();
 }
 
+async function copyNagaShaderAssets(root, outdir) {
+  const absoluteSrcRoot = path.join(root, nagaShaderRoot);
+  if (!await directoryExists(absoluteSrcRoot)) return [];
+
+  const files = await walkFiles(absoluteSrcRoot);
+  const copied = [];
+
+  for (const file of files) {
+    if (!nagaShaderExtensions.has(path.extname(file).toLowerCase())) continue;
+
+    const rel = path.relative(absoluteSrcRoot, file);
+    const destRel = path.join('vendor', 'naga-materialx', rel);
+    await copyIfChanged(file, path.join(outdir, destRel));
+    copied.push(destRel);
+  }
+
+  return copied.sort();
+}
+
 export async function prepareStaticAssets({
   root = process.cwd(),
   outdir = path.join(root, 'dist'),
@@ -166,6 +187,7 @@ export async function prepareStaticAssets({
     rm(path.join(outdir, 'asset-manifest.json'), { force: true }),
     rm(path.join(outdir, 'assets'), { recursive: true, force: true }),
     rm(path.join(outdir, 'vendor', 'materialx-runtime'), { recursive: true, force: true }),
+    rm(path.join(outdir, 'vendor', 'naga-materialx'), { recursive: true, force: true }),
     rm(path.join(outdir, 'vendor', 'MaterialX', 'resources'), { recursive: true, force: true }),
     rm(path.join(outdir, 'vendor', 'MaterialX', 'javascript', 'MaterialXView', 'public'), { recursive: true, force: true }),
   ]);
@@ -175,11 +197,13 @@ export async function prepareStaticAssets({
     materialXPathPaths,
     materialXResourcePaths,
     materialXViewerAssetPaths,
+    nagaShaderPaths,
   ] = await Promise.all([
     copyMatching(root, outdir, 'assets', imageExtensions),
     copyMaterialXRuntime(root, outdir),
     copyMatching(root, outdir, materialXResourceRoot, materialXResourceExtensions, { required: true }),
     copyViewerAssets(root, outdir),
+    copyNagaShaderAssets(root, outdir),
   ]);
 
   const manifest = {
@@ -187,6 +211,7 @@ export async function prepareStaticAssets({
     materialXPathPaths,
     materialXResourcePaths,
     materialXViewerAssetPaths,
+    nagaShaderPaths,
   };
 
   await writeFile(
