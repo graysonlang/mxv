@@ -193,6 +193,7 @@ const materialUniformLayout = createMaterialUniformLayout();
 const publicUniformByteLength = materialUniformLayout.byteLength;
 const publicUniformStructSource = createPublicUniformStructSource();
 const materialAccessorSource = createMaterialAccessorSource();
+const generatedStandardSurfaceFunctionName = 'NG_standard_surface_surfaceshader_100';
 const privatePixelUniformPorts = [
   { type: 'matrix44', variable: 'u_envMatrix' },
   { type: 'float', variable: 'u_envLightIntensity' },
@@ -203,6 +204,30 @@ const privatePixelUniformPorts = [
   { type: 'integer', variable: 'u_numActiveLightSources' },
 ];
 const privatePixelTexturePorts = new Set(['u_envRadiance', 'u_envIrradiance']);
+const generatedPixelMainArguments = [
+  ...materialUniformLayout.ports
+    .slice(0, materialPortIndex.coatAffectColor)
+    .map(port => port.field),
+  'geomprop_Nworld_out',
+  ...materialUniformLayout.ports
+    .slice(materialPortIndex.coatAffectColor)
+    .map(port => port.field),
+  'geomprop_Nworld_out',
+  'geomprop_Tworld_out',
+  'SR_standard_out',
+];
+const generatedPixelFunctionParameters = [
+  ...materialUniformLayout.ports
+    .slice(0, materialPortIndex.coatAffectColor)
+    .map(port => port.field),
+  'coat_normal',
+  ...materialUniformLayout.ports
+    .slice(materialPortIndex.coatAffectColor)
+    .map(port => port.field),
+  'normal',
+  'tangent',
+  'out1',
+];
 
 const baseMaterialPorts = {
   base: 1,
@@ -799,6 +824,155 @@ function validateGeneratedPrivateUniforms(generatedPorts, sampleId) {
   return generatedBufferPorts.length;
 }
 
+function countGeneratedFunctions(source) {
+  return (source.match(/^[A-Za-z_][\w<>\s]*?\s+[A-Za-z_]\w*\s*\([^;{}]*\)\s*\{/gm) || []).length;
+}
+
+function splitTopLevelArguments(source) {
+  const args = [];
+  let depth = 0;
+  let start = 0;
+
+  for (let index = 0; index < source.length; index++) {
+    const character = source[index];
+    if (character === '(' || character === '[' || character === '{') {
+      depth++;
+    } else if (character === ')' || character === ']' || character === '}') {
+      depth--;
+    } else if (character === ',' && depth === 0) {
+      args.push(source.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+
+  const tail = source.slice(start).trim();
+  if (tail) args.push(tail);
+  return args;
+}
+
+function extractParenthesizedSource(source, openParenIndex) {
+  let depth = 0;
+  for (let index = openParenIndex; index < source.length; index++) {
+    const character = source[index];
+    if (character === '(') {
+      depth++;
+    } else if (character === ')') {
+      depth--;
+      if (depth === 0) {
+        return source.slice(openParenIndex + 1, index);
+      }
+    }
+  }
+
+  return '';
+}
+
+function extractFunctionSignatureArguments(source, functionName) {
+  const signaturePattern = new RegExp(`\\bvoid\\s+${functionName}\\s*\\(`);
+  const signature = signaturePattern.exec(source);
+  if (!signature) return [];
+  const openParenIndex = source.indexOf('(', signature.index);
+  return splitTopLevelArguments(extractParenthesizedSource(source, openParenIndex));
+}
+
+function extractMainCallArguments(source, functionName) {
+  const main = /\bvoid\s+main\s*\(\s*\)\s*\{/.exec(source);
+  if (!main) return [];
+  const callIndex = source.indexOf(`${functionName}(`, main.index);
+  if (callIndex < 0) return [];
+  const openParenIndex = source.indexOf('(', callIndex);
+  return splitTopLevelArguments(extractParenthesizedSource(source, openParenIndex));
+}
+
+function getGlslParameterName(parameter) {
+  return parameter
+    .trim()
+    .replace(/^out\s+/, '')
+    .split(/\s+/)
+    .pop()
+    ?.replace(/\[[^\]]*\]$/, '') || '';
+}
+
+function describeMismatches(actual, expected) {
+  if (actual.length !== expected.length) {
+    return [`expected ${expected.length} entries, got ${actual.length}`];
+  }
+
+  return expected
+    .map((expectedValue, index) => (actual[index] === expectedValue
+      ? null
+      : `${index}: expected ${expectedValue}, got ${actual[index] || '<missing>'}`))
+    .filter(Boolean);
+}
+
+function validateGeneratedPixelSource(source, sampleId) {
+  const checks = [
+    {
+      label: 'fragment stage pragma',
+      pattern: /#pragma\s+shader_stage\s*\(\s*fragment\s*\)/,
+    },
+    {
+      label: 'binding 1 PrivateUniforms_pixel',
+      pattern: /layout\s*\(\s*std140\s*,\s*binding\s*=\s*1\s*\)\s*uniform\s+PrivateUniforms_pixel/,
+    },
+    {
+      label: 'binding 6 PublicUniforms_pixel',
+      pattern: /layout\s*\(\s*std140\s*,\s*binding\s*=\s*6\s*\)\s*uniform\s+PublicUniforms_pixel/,
+    },
+    {
+      label: 'binding 7 LightData_pixel',
+      pattern: /layout\s*\(\s*std140\s*,\s*binding\s*=\s*7\s*\)\s*uniform\s+LightData_pixel/,
+    },
+    {
+      label: 'VertexData input',
+      pattern: /layout\s*\(\s*location\s*=\s*0\s*\)\s*in\s+VertexData/,
+    },
+    {
+      label: 'out1 color output',
+      pattern: /layout\s*\(\s*location\s*=\s*0\s*\)\s*out\s+vec4\s+out1/,
+    },
+    {
+      label: 'standard surface function',
+      pattern: new RegExp(`\\bvoid\\s+${generatedStandardSurfaceFunctionName}\\s*\\(`),
+    },
+    {
+      label: 'main entry point',
+      pattern: /\bvoid\s+main\s*\(\s*\)/,
+    },
+  ];
+  const missing = checks
+    .filter(check => !check.pattern.test(source))
+    .map(check => check.label);
+
+  if (missing.length) {
+    throw new Error(`Generated pixel source does not match the narrow fragment contract for "${sampleId}": ${missing.join(', ')}.`);
+  }
+
+  const signatureNames = extractFunctionSignatureArguments(source, generatedStandardSurfaceFunctionName)
+    .map(getGlslParameterName);
+  const signatureMismatches = describeMismatches(signatureNames, generatedPixelFunctionParameters);
+  if (signatureMismatches.length) {
+    throw new Error(`Generated standard-surface function signature changed for "${sampleId}": ${signatureMismatches.join('; ')}.`);
+  }
+
+  const mainCallArguments = extractMainCallArguments(source, generatedStandardSurfaceFunctionName);
+  const expectedMainCallArguments = [...generatedPixelMainArguments];
+  const surfaceOutputArgument = mainCallArguments.at(-1) || '';
+  if (/^SR_\w+_out$/.test(surfaceOutputArgument)) {
+    expectedMainCallArguments[expectedMainCallArguments.length - 1] = surfaceOutputArgument;
+  }
+  const mainCallMismatches = describeMismatches(mainCallArguments, expectedMainCallArguments);
+  if (mainCallMismatches.length) {
+    throw new Error(`Generated fragment main call changed for "${sampleId}": ${mainCallMismatches.join('; ')}.`);
+  }
+
+  return {
+    functionCount: countGeneratedFunctions(source),
+    mainCallArgumentCount: mainCallArguments.length,
+    standardSurfaceParameterCount: signatureNames.length,
+  };
+}
+
 async function generateMaterialSample(mx, sampleId) {
   if (!mx.WgslShaderGenerator) {
     throw new Error('MaterialX runtime does not expose WgslShaderGenerator.');
@@ -840,12 +1014,14 @@ async function generateMaterialSample(mx, sampleId) {
 
   const vertexSource = shader.getSourceCode('vertex');
   const pixelSource = shader.getSourceCode('pixel');
+  const pixelContract = validateGeneratedPixelSource(pixelSource, sampleId);
   return {
     label: fallback.label,
     ports,
     renderable: element.getNamePath(),
     source: 'shadergen',
     target: typeof generator.getTarget === 'function' ? generator.getTarget() : 'unknown',
+    pixelContract,
     privateUniformCount,
     uniformCount: generatedPorts.length,
     vertexSource,
@@ -875,6 +1051,7 @@ async function initializeMaterialXShaderSupport(materialControl, pipelineControl
     setMetric('shaderContract', activeSample ? `${activeSample.uniformCount} public ports / ${publicUniformByteLength} B` : '-');
     setMetric('contract', activeSample ? `bindings 0-7 / ${activeSample.privateUniformCount} private ports / ${privatePixelByteLength} B` : '-');
     setMetric('shaderSource', activeSample ? `${activeSample.vertexLines}v / ${activeSample.pixelLines}p lines` : '-');
+    setMetric('fragmentAdapter', activeSample ? `${activeSample.pixelContract.functionCount} GLSL funcs / ${activeSample.pixelContract.standardSurfaceParameterCount} params` : '-');
     setMetric('shaderNotes', materialXKnownWarnings.size ? 'bool uniform mapped' : 'none');
     materialControl.refreshOptions();
     materialControl.applyMaterial(activeMaterialId, { updateUrl: false });
@@ -892,6 +1069,7 @@ async function initializeMaterialXShaderSupport(materialControl, pipelineControl
     console.error(error);
     setMetric('shaderTarget', 'fallback');
     setMetric('shaderContract', error?.message || String(error));
+    setMetric('fragmentAdapter', 'fallback active');
     setMetric('vertexAdapter', 'fallback active');
     setMetric('shaderNotes', 'fallback active');
     setStatus('Shadergen fallback active');

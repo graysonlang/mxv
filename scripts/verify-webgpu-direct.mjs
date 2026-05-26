@@ -231,6 +231,7 @@ async function pollPageState(client) {
       fps: text('[data-fps]'),
       metrics: {
         firstFrame: metric('firstFrame'),
+        fragmentAdapter: metric('fragmentAdapter'),
         material: metric('material'),
         renderer: metric('renderer'),
         shaderContract: metric('shaderContract'),
@@ -257,6 +258,9 @@ function validateReadyState(state) {
   }
   if (!/GLSL -> WGSL/.test(metrics.vertexAdapter)) {
     failures.push(`vertex adapter is ${metrics.vertexAdapter || '<blank>'}`);
+  }
+  if (!/GLSL funcs \/ \d+ params/.test(metrics.fragmentAdapter)) {
+    failures.push(`fragment adapter is ${metrics.fragmentAdapter || '<blank>'}`);
   }
   if (!metrics.firstFrame || metrics.firstFrame === '-') failures.push('first frame metric did not populate');
   if (!state.fps || state.fps === '-') failures.push('fps metric did not populate');
@@ -333,6 +337,7 @@ async function main() {
     console.log(`  material: ${state.metrics.material}`);
     console.log(`  shader contract: ${state.metrics.shaderContract}`);
     console.log(`  vertex adapter: ${state.metrics.vertexAdapter}`);
+    console.log(`  fragment adapter: ${state.metrics.fragmentAdapter}`);
     console.log(`  screenshot: ${path.relative(process.cwd(), screenshotPath)}`);
   } finally {
     client?.close();
