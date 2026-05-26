@@ -49,6 +49,7 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 - [x] Generate and bind HDR radiance mip levels for the direct Naga path so generated `u_envRadianceMips` / `textureSampleLevel` environment lookups are meaningful.
 - [x] Add the upstream Standard Surface car-paint sample as a visual parity check that exercises clear coat and anisotropy without emission clipping.
 - [x] Capture the MaterialX desktop viewer environment-lighting defaults for the Phase 3 comparison: FIS by default, `envSampleCount` 16, and `envLightIntensity` 1.
+- [x] Match the direct WebGPU environment sampler to the desktop viewer's lat-long policy: repeat in U, clamp in V, and linear mip filtering.
 
 ## In Progress
 

@@ -223,6 +223,7 @@ Use the upstream desktop viewer as the reference point for environment-lighting 
 - `../mx/vendor/MaterialX/source/MaterialXView/Main.cpp` defaults to `resources/Lights/san_giuseppe_bridge_split.hdr`, `SPECULAR_ENVIRONMENT_FIS`, `mx::DEFAULT_ENV_SAMPLE_COUNT`, and environment light intensity `1.0`.
 - The desktop command-line help reports `--envMethod 0` as filtered importance sampling, `--envMethod 1` as prefiltered environment maps, and `--envSampleCount` defaulting to `16`.
 - `../mx/vendor/MaterialX/source/MaterialXView/RenderPipelineGL.cpp` only updates the prefiltered environment map when `LightHandler::getUsePrefilteredMap()` is true; otherwise the default path is the generated shader's filtered-importance-sampling environment path.
+- The same desktop prefilter path binds the source radiance map with periodic U addressing, clamped V addressing, and linear filtering. The direct WebGPU path mirrors this for lat-long environment sampling with `addressModeU: "repeat"`, `addressModeV: "clamp-to-edge"`, and linear mip filtering.
 
 For this spike, `shader=naga&envSamples=16&envIntensity=1` is the closest direct-viewer setting to the desktop default. The current browser path still uses a simple CPU-generated radiance mip chain, not the desktop viewer's full prefiltering pipeline.
 

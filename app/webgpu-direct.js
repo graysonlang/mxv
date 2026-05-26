@@ -2554,10 +2554,11 @@ async function main() {
   const publicUniformBuffer = createUniformBuffer(device, 'MaterialX PublicUniforms pixel port table', publicUniformData.bytes);
   const lightDataBuffer = createUniformBuffer(device, 'MaterialX LightData pixel placeholder', lightData);
   const envSampler = device.createSampler({
-    addressModeU: 'clamp-to-edge',
+    addressModeU: 'repeat',
     addressModeV: 'clamp-to-edge',
     magFilter: 'linear',
     minFilter: 'linear',
+    mipmapFilter: 'linear',
   });
   device.queue.writeBuffer(lightDataBuffer, 0, lightData);
   setMetric('contract', `bindings 0-7 / private ${privatePixelByteLength} B`);
