@@ -25,6 +25,10 @@ const privatePixelFloatCount = 28;
 const lightDataFloatCount = 4;
 const materialXBoolUniformWarning = 'WGSL does not allow boolean types to be stored in uniform or storage address spaces.';
 const materialXKnownWarnings = new Set();
+const webGpuErrors = [];
+if (typeof window !== 'undefined') {
+  window.__mxvWebGpuErrors = webGpuErrors;
+}
 
 const materialPortIndex = {
   base: 0,
@@ -448,6 +452,23 @@ function setStatus(text) {
 
 function setMetric(name, value) {
   setText(`[data-metric="${name}"]`, value);
+}
+
+function recordWebGpuError(scope, error) {
+  const message = error?.message || String(error);
+  webGpuErrors.push({
+    message,
+    scope,
+  });
+  setStatus('WebGPU error');
+  setMetric('renderer', `${scope}: ${message}`);
+  console.error(`[WebGPU] ${scope}: ${message}`, error);
+}
+
+function installWebGpuErrorReporting(device) {
+  device.addEventListener('uncapturederror', (event) => {
+    recordWebGpuError(event.error?.constructor?.name || 'uncaptured', event.error);
+  });
 }
 
 function alignTo(value, alignment) {
@@ -1203,54 +1224,66 @@ function createDepthTexture(device, dimensions) {
   });
 }
 
-function createPipeline(device, format, options = {}) {
+async function createPipeline(device, format, options = {}) {
   const {
     label = 'Direct WebGPU proof shader',
     source = shaderSource,
   } = options;
-  const moduleStart = performance.now();
-  const shaderModule = device.createShaderModule({
-    code: source,
-    label,
-  });
-  setMetric('shaderModule', formatDuration(performance.now() - moduleStart));
+  device.pushErrorScope('validation');
+  try {
+    const moduleStart = performance.now();
+    const shaderModule = device.createShaderModule({
+      code: source,
+      label,
+    });
+    setMetric('shaderModule', formatDuration(performance.now() - moduleStart));
 
-  const start = performance.now();
-  const pipeline = device.createRenderPipeline({
-    depthStencil: {
-      depthCompare: 'less',
-      depthWriteEnabled: true,
-      format: depthFormat,
-    },
-    fragment: {
-      entryPoint: 'fragmentMain',
-      module: shaderModule,
-      targets: [{ format }],
-    },
-    label: label.replace(/\bshader\b/i, 'pipeline'),
-    layout: 'auto',
-    primitive: {
-      cullMode: 'back',
-      frontFace: 'ccw',
-      topology: 'triangle-list',
-    },
-    vertex: {
-      buffers: [
-        {
-          arrayStride: 9 * Float32Array.BYTES_PER_ELEMENT,
-          attributes: [
-            { format: 'float32x3', offset: 0, shaderLocation: 0 },
-            { format: 'float32x3', offset: 3 * Float32Array.BYTES_PER_ELEMENT, shaderLocation: 1 },
-            { format: 'float32x3', offset: 6 * Float32Array.BYTES_PER_ELEMENT, shaderLocation: 2 },
-          ],
-        },
-      ],
-      entryPoint: 'vertexMain',
-      module: shaderModule,
-    },
-  });
-  recordDuration('pipeline', start);
-  return pipeline;
+    const start = performance.now();
+    const pipeline = await device.createRenderPipelineAsync({
+      depthStencil: {
+        depthCompare: 'less',
+        depthWriteEnabled: true,
+        format: depthFormat,
+      },
+      fragment: {
+        entryPoint: 'fragmentMain',
+        module: shaderModule,
+        targets: [{ format }],
+      },
+      label: label.replace(/\bshader\b/i, 'pipeline'),
+      layout: 'auto',
+      primitive: {
+        cullMode: 'back',
+        frontFace: 'ccw',
+        topology: 'triangle-list',
+      },
+      vertex: {
+        buffers: [
+          {
+            arrayStride: 9 * Float32Array.BYTES_PER_ELEMENT,
+            attributes: [
+              { format: 'float32x3', offset: 0, shaderLocation: 0 },
+              { format: 'float32x3', offset: 3 * Float32Array.BYTES_PER_ELEMENT, shaderLocation: 1 },
+              { format: 'float32x3', offset: 6 * Float32Array.BYTES_PER_ELEMENT, shaderLocation: 2 },
+            ],
+          },
+        ],
+        entryPoint: 'vertexMain',
+        module: shaderModule,
+      },
+    });
+    const error = await device.popErrorScope();
+    if (error) {
+      throw error;
+    }
+    recordDuration('pipeline', start);
+    return pipeline;
+  } catch (error) {
+    const scopedError = await device.popErrorScope().catch(() => null);
+    const reportedError = scopedError || error;
+    recordWebGpuError('pipeline validation', reportedError);
+    throw reportedError;
+  }
 }
 
 function bindCanvasControls(canvas) {
@@ -1518,10 +1551,11 @@ async function main() {
 
   setStatus('Requesting WebGPU device');
   const { device } = await createDevice();
+  installWebGpuErrorReporting(device);
   const format = navigator.gpu.getPreferredCanvasFormat();
   let dimensions = configureCanvas(canvas, device, context, format);
   let depthTexture = createDepthTexture(device, dimensions);
-  let pipeline = createPipeline(device, format);
+  let pipeline = await createPipeline(device, format);
 
   const meshStart = performance.now();
   const geometry = await loadGeometry();
@@ -1565,7 +1599,7 @@ async function main() {
       const adapterStart = performance.now();
       const adapted = adaptGeneratedVertexSource(generatedVertexSource);
       const adapterDuration = performance.now() - adapterStart;
-      pipeline = createPipeline(device, format, {
+      pipeline = await createPipeline(device, format, {
         label: 'Direct WebGPU generated vertex bridge shader',
         source: adapted.shaderSource,
       });

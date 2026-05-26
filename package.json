@@ -31,6 +31,7 @@
     "inspect:shadergen": "node ./scripts/inspect-materialx-generators.mjs",
     "lint": "eslint .",
     "test": "echo \"Error: no test specified\" && exit 1",
+    "verify:webgpu": "node ./scripts/verify-webgpu-direct.mjs",
     "bootstrap": "npm install && npm run setup:assets",
     "setup:assets": "node ./scripts/setup-materialx.mjs",
     "setup:materialx": "node ./scripts/setup-materialx.mjs"

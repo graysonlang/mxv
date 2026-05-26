@@ -1,6 +1,7 @@
 .DS_Store
 /dist/
 /package-lock.json
+/test-results/
 node_modules/
 /vendor/MaterialX/
 /vendor/.build/
