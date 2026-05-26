@@ -579,7 +579,9 @@ fn fragmentMain(input: BackgroundVertexOutput) -> @location(0) vec4<f32> {
     u_background.cameraRight.xyz * input.ndc.x * aspect * tanHalfFov +
     u_background.cameraUp.xyz * input.ndc.y * tanHalfFov
   );
-  let color = textureSampleLevel(u_envRadianceTexture, u_envRadianceSampler, mx_latlong_uv(-direction), 0.0).rgb * intensity;
+  let uv = mx_latlong_uv(direction);
+  let rotatedUv = vec2<f32>(fract(uv.x + 0.5), uv.y);
+  let color = textureSampleLevel(u_envRadianceTexture, u_envRadianceSampler, rotatedUv, 0.0).rgb * intensity;
   return vec4<f32>(mx_srgb_encode(max(color, vec3<f32>(0.0))), 1.0);
 }
 `;
