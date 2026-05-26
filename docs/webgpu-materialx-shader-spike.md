@@ -302,6 +302,8 @@ The second helper slice ports the generated GGX helper names `mx_average_alpha`,
 
 The direct diffuse response now uses a port of the generated `mx_oren_nayar_diffuse` helper. This brings the adapter coverage to the first diffuse helper while keeping indirect irradiance and the broader BSDF layering model intentionally approximate.
 
+Generated pre-BSDF helpers `mx_luminance_color3` and `mx_roughness_anisotropy` are now ported as well. Opacity luminance and anisotropic roughness packing now flow through those helper boundaries before the bridge calls its direct diffuse and specular approximations.
+
 MaterialX emits a known warning for the `standard_surface.thin_walled` boolean port because WGSL does not allow booleans in uniform/storage address spaces. The direct page filters that specific Emscripten `printErr` message and surfaces it as `Shader Notes: bool uniform mapped`; unknown MaterialX stderr output is still forwarded to the console.
 
 This is not yet a direct translation of the generated `wgsl-complete.pixel.glsl` output. Instead, it is a browser-WGSL bridge that keeps the generated binding numbers, vertex-stage semantics, and public-uniform semantic order while using a compact hand-authored standard-surface approximation for the fragment stage. That gives the spike a real WebGPU resource contract to measure before investing in a broader shader translator.

@@ -203,7 +203,9 @@ const portedGeneratedPixelHelpers = [
   'mx_ggx_NDF',
   'mx_ggx_smith_G1',
   'mx_ggx_smith_G2',
+  'mx_luminance_color3',
   'mx_oren_nayar_diffuse',
+  'mx_roughness_anisotropy',
 ];
 const privatePixelUniformPorts = [
   { type: 'matrix44', variable: 'u_envMatrix' },
@@ -624,9 +626,21 @@ fn mx_ggx_smith_G2(NdotL: f32, NdotV: f32, alpha: f32) -> f32 {
   return 2.0 * NdotL * NdotV / max(lambdaL * NdotV + lambdaV * NdotL, 0.001);
 }
 
-fn mx_bridge_specular_lobe(N: vec3<f32>, L: vec3<f32>, V: vec3<f32>, X: vec3<f32>, roughness: f32) -> f32 {
-  let safeRoughness = clamp(roughness, 0.045, 1.0);
-  let alpha = vec2<f32>(safeRoughness);
+fn mx_roughness_anisotropy(roughness: f32, anisotropy: f32) -> vec2<f32> {
+  let roughness_sqr = clamp(roughness * roughness, 0.00000001, 1.0);
+  if (anisotropy > 0.0) {
+    let aspect = sqrt(1.0 - clamp(anisotropy, 0.0, 0.98));
+    return vec2<f32>(min(roughness_sqr / aspect, 1.0), roughness_sqr * aspect);
+  }
+  return vec2<f32>(roughness_sqr);
+}
+
+fn mx_luminance_color3(inputValue: vec3<f32>, lumacoeffs: vec3<f32>) -> vec3<f32> {
+  return vec3<f32>(dot(inputValue, lumacoeffs));
+}
+
+fn mx_bridge_specular_lobe(N: vec3<f32>, L: vec3<f32>, V: vec3<f32>, X: vec3<f32>, alphaInput: vec2<f32>) -> f32 {
+  let alpha = clamp(alphaInput, vec2<f32>(0.045), vec2<f32>(1.0));
   let Nn = normalize(N);
   let Xn = normalize(X - dot(X, Nn) * Nn);
   let Yn = normalize(cross(Nn, Xn));
@@ -686,7 +700,7 @@ ${parameters}
   let thinFilmThickness = max(thin_film_thickness, 0.0);
   let emissionWeight = max(emission, 0.0);
   let emissionColor = max(emission_color, vec3<f32>(0.0));
-  let surfaceOpacity = saturate(dot(opacity, vec3<f32>(0.272229, 0.674082, 0.053689)));
+  let surfaceOpacity = saturate(mx_luminance_color3(opacity, vec3<f32>(0.272229, 0.674082, 0.053689)).x);
   let envIntensity = u_privatePixel.u_envLightIntensity;
   let activeLightCount = f32(u_privatePixel.u_numActiveLightSources);
   let nDotL = saturate(dot(shadingNormal, lightDirection));
@@ -707,11 +721,13 @@ ${parameters}
   let dielectricF0 = vec3<f32>(mx_ior_to_f0(specularIor)) * specularColor * specularWeight;
   let f0 = dielectricF0 * (1.0 - metalnessWeight) + baseColor * metalnessWeight;
   let specularFresnel = mx_fresnel_schlick(vDotH, f0);
-  let specularTerm = mx_bridge_specular_lobe(shadingNormal, lightDirection, viewDirection, shadingTangent, mix(specularRoughness, 1.0, coatWeight * coatAffectRoughness));
+  let mainRoughness = mx_roughness_anisotropy(mix(specularRoughness, 1.0, coatWeight * coatAffectRoughness), specular_anisotropy);
+  let specularTerm = mx_bridge_specular_lobe(shadingNormal, lightDirection, viewDirection, shadingTangent, mainRoughness);
   let envSpecular = radiance * mx_fresnel_schlick(nDotV, f0) * mix(0.35, 0.08, specularRoughness);
   let coatF0 = vec3<f32>(mx_ior_to_f0(coatIor)) * coatColor;
   let film = mx_bridge_thin_film_tint(thinFilmThickness, coatWeight);
-  let coatTerm = coatWeight * mx_bridge_specular_lobe(shadingNormal, lightDirection, viewDirection, shadingTangent, coatRoughness) * mx_fresnel_schlick(vDotH, coatF0) * film;
+  let coatRoughnessVector = mx_roughness_anisotropy(coatRoughness, coat_anisotropy);
+  let coatTerm = coatWeight * mx_bridge_specular_lobe(shadingNormal, lightDirection, viewDirection, shadingTangent, coatRoughnessVector) * mx_fresnel_schlick(vDotH, coatF0) * film;
   let sheenTerm = sheenWeight * sheenColor * pow(1.0 - nDotV, mix(6.0, 1.4, sheenRoughness)) * 0.32;
   let subsurfaceTerm = subsurfaceWeight * subsurfaceColor * (0.1 + 0.42 * pow(1.0 - nDotV, 2.0));
   let tangentGlint = vec3<f32>(pow(tDotH, 36.0)) * coatWeight * film * 0.06;

@@ -34,6 +34,7 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 - [x] Validate ported fragment helpers against the live generated pixel source and report adapter coverage in the HUD/verifier.
 - [x] Port the generated GGX helper slice and use it for the bridge's direct specular lobes.
 - [x] Port `mx_oren_nayar_diffuse` and use it for the bridge's direct diffuse response.
+- [x] Port generated pre-BSDF helpers for luminance and roughness/anisotropy packing.
 
 ## In Progress
 
