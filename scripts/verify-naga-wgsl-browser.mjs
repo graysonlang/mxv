@@ -15,7 +15,7 @@ for (const arg of process.argv.slice(2)) {
 }
 
 if (args.has('help')) {
-  console.log('Usage: npm run verify:naga-wgsl -- [--skip-spike] [--allow-known-failures] [--headed] [--timeout=20000]');
+  console.log('Usage: npm run verify:naga-wgsl -- [--skip-spike] [--skip-pipeline] [--allow-known-failures] [--headed] [--timeout=20000]');
   console.log('');
   console.log('Set MXV_NAGA=/path/to/naga to use a non-default naga-cli binary.');
   process.exit(0);
@@ -24,6 +24,7 @@ if (args.has('help')) {
 const timeoutMs = Number(args.get('timeout') || process.env.MXV_VERIFY_TIMEOUT || 20_000);
 const headed = args.has('headed') || process.env.MXV_VERIFY_HEADFUL === '1';
 const allowKnownFailures = args.has('allow-known-failures');
+const checkPipelines = !args.has('skip-pipeline');
 
 async function collectShaderManifest() {
   const sampleDirs = (await readdir(outputRoot, { withFileTypes: true }))
@@ -41,6 +42,8 @@ async function collectShaderManifest() {
       manifest.push({
         id: `${sampleId}/${stage}`,
         path: `/shaders/${encodeURIComponent(sampleId)}/${filename}`,
+        sampleId,
+        stage,
       });
     }
   }
@@ -57,6 +60,7 @@ async function main() {
   if (!shaderManifest.length) {
     throw new Error(`No Naga WGSL fixtures found in ${path.relative(repoRoot, outputRoot)}.`);
   }
+  const contract = await validateShaderContracts(shaderManifest);
 
   let server;
   let chromeSession;
@@ -72,20 +76,29 @@ async function main() {
     await client.send('Page.navigate', { url: server.url });
     await waitForPageLoad(client, server.url);
 
-    const result = await compileShadersInBrowser(client, shaderManifest);
-    const failures = result.results.filter(shader => !shader.ok);
+    const result = await compileShadersInBrowser(client, shaderManifest, { checkPipelines });
+    const failures = result.shaders.filter(shader => !shader.ok);
     const blockingFailures = allowKnownFailures
       ? failures.filter(shader => !isKnownFailure(shader))
       : failures;
+    const pipelineFailures = result.pipelines.filter(pipeline => !pipeline.ok);
 
-    console.log('Naga WGSL browser compile check');
+    console.log('Naga WGSL browser verification');
     console.log(`  adapter: ${result.adapter || 'available'}`);
-    console.log(`  shaders: ${result.results.length}`);
-    for (const shader of result.results) {
+    console.log(`  contract: ${contract.sampleCount} sample(s) match direct bindings and entry points`);
+    console.log(`  shaders: ${result.shaders.length}`);
+    for (const shader of result.shaders) {
       const knownFailure = isKnownFailure(shader);
       const status = shader.ok ? 'ok' : knownFailure ? 'known failure' : 'failed';
       const detail = shader.messages.length ? ` (${summarizeMessages(shader.messages)})` : '';
       console.log(`  ${shader.id}: ${status}${detail}`);
+    }
+    if (checkPipelines) {
+      console.log(`  pipelines: ${result.pipelines.length}`);
+      for (const pipeline of result.pipelines) {
+        const detail = pipeline.messages.length ? ` (${summarizeMessages(pipeline.messages)})` : '';
+        console.log(`  ${pipeline.id}: ${pipeline.ok ? 'ok' : 'failed'}${detail}`);
+      }
     }
 
     if (failures.length && !blockingFailures.length) {
@@ -94,6 +107,9 @@ async function main() {
 
     if (blockingFailures.length) {
       throw new Error(`${blockingFailures.length} Naga WGSL shader module(s) failed browser compilation.`);
+    }
+    if (pipelineFailures.length) {
+      throw new Error(`${pipelineFailures.length} Naga WGSL render pipeline(s) failed browser compilation.`);
     }
   } finally {
     client?.close();
@@ -105,25 +121,114 @@ async function main() {
   }
 }
 
-function compileShadersInBrowser(client, manifest) {
-  const expression = `(${browserCompileShaders.toString()})(${JSON.stringify(manifest)})`;
+function compileShadersInBrowser(client, manifest, options) {
+  const expression = `(${browserCompileShaders.toString()})(${JSON.stringify(manifest)}, ${JSON.stringify(options)})`;
 
   return evaluate(client, expression);
 }
 
-async function browserCompileShaders(shaders) {
+async function validateShaderContracts(manifest) {
+  const expected = {
+    pixel: {
+      bindingCount: 7,
+      bindings: [
+        { binding: 1, kind: 'uniform', type: 'PrivateUniforms_pixel' },
+        { binding: 2, kind: 'texture', type: 'texture_2d<f32>' },
+        { binding: 3, kind: 'sampler', type: 'sampler' },
+        { binding: 4, kind: 'texture', type: 'texture_2d<f32>' },
+        { binding: 5, kind: 'sampler', type: 'sampler' },
+        { binding: 6, kind: 'uniform', type: 'PublicUniforms_pixel' },
+        { binding: 7, kind: 'uniform', type: 'LightData_pixel' },
+      ],
+      entryPattern: /@fragment\s+fn\s+main\s*\([^)]*@location\(0\)[^)]*@location\(1\)[^)]*@location\(2\)/s,
+    },
+    vertex: {
+      bindingCount: 1,
+      bindings: [
+        { binding: 0, kind: 'uniform', type: 'PrivateUniforms_vertex' },
+      ],
+      entryPattern: /@vertex\s+fn\s+main\s*\([^)]*@location\(0\)[^)]*@location\(1\)[^)]*@location\(2\)/s,
+    },
+  };
+  const sampleIds = new Set();
+
+  for (const shader of manifest) {
+    const stageExpected = expected[shader.stage];
+    if (!stageExpected) continue;
+
+    const filepath = path.join(outputRoot, shader.sampleId, `${shader.stage}.wgsl`);
+    const source = await readFile(filepath, 'utf8');
+    const bindings = extractBindings(source);
+    const bindingMap = new Map(bindings.map(binding => [binding.binding, binding]));
+    const errors = [];
+
+    if (!stageExpected.entryPattern.test(source)) {
+      errors.push(`missing ${shader.stage} main entry point with locations 0-2`);
+    }
+
+    if (bindings.length !== stageExpected.bindingCount) {
+      errors.push(`expected ${stageExpected.bindingCount} binding(s), found ${bindings.length}`);
+    }
+
+    for (const bindingExpected of stageExpected.bindings) {
+      const binding = bindingMap.get(bindingExpected.binding);
+      if (!binding) {
+        errors.push(`missing binding ${bindingExpected.binding}`);
+        continue;
+      }
+      if (binding.group !== 0) {
+        errors.push(`binding ${bindingExpected.binding} uses group ${binding.group}, expected group 0`);
+      }
+      if (binding.kind !== bindingExpected.kind || binding.type !== bindingExpected.type) {
+        errors.push(
+          `binding ${bindingExpected.binding} is ${binding.kind} ${binding.type}, expected ${bindingExpected.kind} ${bindingExpected.type}`,
+        );
+      }
+    }
+
+    if (errors.length) {
+      throw new Error(`${shader.id} contract mismatch: ${errors.join('; ')}`);
+    }
+
+    sampleIds.add(shader.sampleId);
+  }
+
+  return {
+    sampleCount: sampleIds.size,
+  };
+}
+
+function extractBindings(source) {
+  return [...source.matchAll(/@group\((\d+)\)\s*@binding\((\d+)\)\s*var(?:<([^>]+)>)?\s+\w+\s*:\s*([^;]+);/gm)]
+    .map(match => ({
+      binding: Number(match[2]),
+      group: Number(match[1]),
+      kind: match[3] === 'uniform'
+        ? 'uniform'
+        : match[4].trim().startsWith('texture_')
+          ? 'texture'
+          : match[4].trim() === 'sampler'
+            ? 'sampler'
+            : 'unknown',
+      type: match[4].trim(),
+    }));
+}
+
+async function browserCompileShaders(shaders, options) {
   const adapter = await navigator.gpu?.requestAdapter({ powerPreference: 'high-performance' });
   if (!adapter) {
     throw new Error('navigator.gpu did not return an adapter.');
   }
 
   const device = await adapter.requestDevice();
-  const results = [];
+  const shaderSources = new Map();
+  const shaderResults = [];
   for (const shader of shaders) {
     const source = await fetch(shader.path).then((response) => {
       if (!response.ok) throw new Error(`${response.status} ${response.statusText}: ${shader.path}`);
       return response.text();
     });
+    shaderSources.set(shader.id, source);
     device.pushErrorScope('validation');
     const module = device.createShaderModule({
       code: source,
@@ -148,17 +253,182 @@ async function browserCompileShaders(shaders) {
       });
     }
 
-    results.push({
+    shaderResults.push({
       id: shader.id,
       messages,
       ok: !messages.some(message => message.type === 'error'),
     });
   }
 
+  const pipelineResults = options?.checkPipelines
+    ? await compileMaterialXPipelines(device, shaders, shaderSources)
+    : [];
+
   return {
     adapter: adapter.info?.device || adapter.info?.description || adapter.info?.vendor || '',
-    results,
+    pipelines: pipelineResults,
+    shaders: shaderResults,
   };
+
+  async function compileMaterialXPipelines(device, shaders, shaderSources) {
+    const sampleIds = [...new Set(shaders.map(shader => shader.sampleId))].sort((a, b) => a.localeCompare(b));
+    const results = [];
+
+    for (const sampleId of sampleIds) {
+      const vertexSource = shaderSources.get(`${sampleId}/vertex`);
+      const fragmentSource = shaderSources.get(`${sampleId}/pixel`);
+      if (!vertexSource || !fragmentSource) continue;
+
+      device.pushErrorScope('validation');
+      try {
+        const bindGroupLayout = createMaterialXBindGroupLayout(device);
+        const bindGroup = createMaterialXBindGroup(device, bindGroupLayout);
+        void bindGroup;
+
+        const pipelineLayout = device.createPipelineLayout({
+          bindGroupLayouts: [bindGroupLayout],
+          label: `${sampleId} MaterialX Naga pipeline layout`,
+        });
+        const vertexModule = device.createShaderModule({
+          code: vertexSource,
+          label: `${sampleId}/vertex pipeline module`,
+        });
+        const fragmentModule = device.createShaderModule({
+          code: fragmentSource,
+          label: `${sampleId}/pixel pipeline module`,
+        });
+
+        await device.createRenderPipelineAsync({
+          depthStencil: {
+            depthCompare: 'less',
+            depthWriteEnabled: true,
+            format: 'depth24plus',
+          },
+          fragment: {
+            entryPoint: 'main',
+            module: fragmentModule,
+            targets: [{ format: 'bgra8unorm' }],
+          },
+          label: `${sampleId} MaterialX Naga render pipeline`,
+          layout: pipelineLayout,
+          primitive: {
+            cullMode: 'back',
+            frontFace: 'ccw',
+            topology: 'triangle-list',
+          },
+          vertex: {
+            buffers: [
+              {
+                arrayStride: 9 * 4,
+                attributes: [
+                  { format: 'float32x3', offset: 0, shaderLocation: 0 },
+                  { format: 'float32x3', offset: 3 * 4, shaderLocation: 1 },
+                  { format: 'float32x3', offset: 6 * 4, shaderLocation: 2 },
+                ],
+              },
+            ],
+            entryPoint: 'main',
+            module: vertexModule,
+          },
+        });
+
+        const scopedError = await device.popErrorScope();
+        const messages = scopedError
+          ? [{
+              lineNum: 0,
+              linePos: 0,
+              message: scopedError.message,
+              type: 'error',
+            }]
+          : [];
+        results.push({
+          id: `${sampleId}/pipeline`,
+          messages,
+          ok: !scopedError,
+        });
+      } catch (error) {
+        const scopedError = await device.popErrorScope().catch(() => null);
+        results.push({
+          id: `${sampleId}/pipeline`,
+          messages: [{
+            lineNum: 0,
+            linePos: 0,
+            message: scopedError?.message || error?.message || String(error),
+            type: 'error',
+          }],
+          ok: false,
+        });
+      }
+    }
+
+    return results;
+  }
+
+  function createMaterialXBindGroupLayout(device) {
+    const vertex = GPUShaderStage.VERTEX;
+    const fragment = GPUShaderStage.FRAGMENT;
+
+    return device.createBindGroupLayout({
+      entries: [
+        { binding: 0, buffer: { minBindingSize: 192, type: 'uniform' }, visibility: vertex },
+        { binding: 1, buffer: { minBindingSize: 96, type: 'uniform' }, visibility: fragment },
+        { binding: 2, texture: { sampleType: 'float', viewDimension: '2d' }, visibility: fragment },
+        { binding: 3, sampler: { type: 'filtering' }, visibility: fragment },
+        { binding: 4, texture: { sampleType: 'float', viewDimension: '2d' }, visibility: fragment },
+        { binding: 5, sampler: { type: 'filtering' }, visibility: fragment },
+        { binding: 6, buffer: { minBindingSize: 288, type: 'uniform' }, visibility: fragment },
+        { binding: 7, buffer: { minBindingSize: 16, type: 'uniform' }, visibility: fragment },
+      ],
+      label: 'MaterialX direct WebGPU bind group layout',
+    });
+  }
+
+  function createMaterialXBindGroup(device, layout) {
+    const privateVertexBuffer = createUniformBuffer(device, 'MaterialX verifier private vertex buffer', 192);
+    const privatePixelBuffer = createUniformBuffer(device, 'MaterialX verifier private pixel buffer', 96);
+    const publicUniformBuffer = createUniformBuffer(device, 'MaterialX verifier public pixel buffer', 288);
+    const lightDataBuffer = createUniformBuffer(device, 'MaterialX verifier light data buffer', 16);
+    const radianceTexture = createVerifierTexture(device, 'MaterialX verifier radiance texture');
+    const irradianceTexture = createVerifierTexture(device, 'MaterialX verifier irradiance texture');
+    const sampler = device.createSampler({
+      addressModeU: 'clamp-to-edge',
+      addressModeV: 'clamp-to-edge',
+      magFilter: 'linear',
+      minFilter: 'linear',
+    });
+
+    return device.createBindGroup({
+      entries: [
+        { binding: 0, resource: { buffer: privateVertexBuffer } },
+        { binding: 1, resource: { buffer: privatePixelBuffer } },
+        { binding: 2, resource: radianceTexture.createView() },
+        { binding: 3, resource: sampler },
+        { binding: 4, resource: irradianceTexture.createView() },
+        { binding: 5, resource: sampler },
+        { binding: 6, resource: { buffer: publicUniformBuffer } },
+        { binding: 7, resource: { buffer: lightDataBuffer } },
+      ],
+      label: 'MaterialX direct WebGPU verifier bind group',
+      layout,
+    });
+  }
+
+  function createUniformBuffer(device, label, size) {
+    return device.createBuffer({
+      label,
+      size,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.UNIFORM,
+    });
+  }
+
+  function createVerifierTexture(device, label) {
+    return device.createTexture({
+      format: 'rgba16float',
+      label,
+      size: [1, 1, 1],
+      usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING,
+    });
+  }
 }
 
 function findChromePath() {

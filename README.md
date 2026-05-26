@@ -130,13 +130,13 @@ npm run spike:naga
 
 The spike writes translated WGSL to `vendor/.cache/naga-materialx`, also ignored by git. Set `MXV_NAGA=/path/to/naga` to use another Naga binary.
 
-Browser-compile the generated Naga WGSL with Chrome/WebGPU:
+Browser-verify the generated Naga WGSL with Chrome/WebGPU:
 
 ```sh
 npm run verify:naga-wgsl
 ```
 
-The Naga spike includes two narrow MaterialX pre-passes: boolean uniform alias lowering and a derivative-free fallback for the generated subsurface radius path that otherwise trips Chrome's `fwidth` uniformity analysis. With those shims, the strict verifier should compile every generated vertex and pixel module in the browser.
+The Naga spike includes two narrow MaterialX pre-passes: boolean uniform alias lowering and a derivative-free fallback for the generated subsurface radius path that otherwise trips Chrome's `fwidth` uniformity analysis. With those shims, the verifier checks the translated binding contract, browser-compiles every generated vertex and pixel module, and compiles each sample as a render pipeline using the direct WebGPU bind group layout.
 
 ## Run
 

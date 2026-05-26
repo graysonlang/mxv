@@ -43,12 +43,13 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 - [x] Add a repeatable Naga CLI spike; after a tiny bool-uniform pre-pass, Naga converts all six generated vertex and pixel shaders to WGSL.
 - [x] Add a browser compile verifier for Naga WGSL output; all generated vertex and pixel modules now pass strict Chrome/WebGPU shader-module compilation.
 - [x] Add a narrow Naga pre-pass for the generated subsurface `fwidth` path, replacing curvature-derived radius with a derivative-free material radius fallback for the spike.
+- [x] Extend the Naga verifier to compare generated bindings and entry points against the direct WebGPU harness and compile all six samples as render pipelines.
 
 ## In Progress
 
 - [ ] Phase 3 direct WebGPU bridge.
-  - Status: binding contract is active; generated fragment source is validated for the expected standard-surface shape; the browser WGSL fragment path now mirrors the generated outer `main()` to standard-surface call flow; a narrow custom translator compiles a first helper-function slice; Naga translates the full emitted shader fixtures offline; Chrome accepts the generated Naga vertex and pixel modules after the bool-uniform and subsurface-radius pre-passes.
-  - Next decision: compare the browser-accepted Naga output bindings, entry points, and resource layout against the direct WebGPU harness, then try a pipeline-level compile before attempting a rendered path.
+  - Status: binding contract is active; generated fragment source is validated for the expected standard-surface shape; the browser WGSL fragment path now mirrors the generated outer `main()` to standard-surface call flow; a narrow custom translator compiles a first helper-function slice; Naga translates the full emitted shader fixtures offline; Chrome accepts the generated Naga vertex and pixel modules after the bool-uniform and subsurface-radius pre-passes; all six translated samples now compile as render pipelines with the direct WebGPU bind group layout.
+  - Next decision: attempt a no-frills rendered path from the Naga vertex/pixel modules, starting with the standard sample and the existing direct WebGPU buffers/textures.
 
 - [ ] Performance comparison against the WebGL viewer.
   - Status: direct page exposes first-frame, frame-time, FPS, material upload, switch-frame, switch-GPU, average, and p95 metrics.
@@ -60,8 +61,8 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
    - Include first visible frame, steady FPS, frame-time average/p95, material switch CPU time, and material switch GPU completion time.
 
 2. Evaluate the Naga path before growing the custom translator.
-   - Compare the Naga output resource bindings and entry points against the direct WebGPU harness.
-   - Add a pipeline-level compile check with the real direct WebGPU bind group layout.
+   - Attempt to draw the standard sample through the Naga-generated vertex and pixel modules.
+   - If it renders, compare visual parity against the current hand-authored bridge before replacing any live path.
    - If it holds, consider a build-time wrapper first and a WASM wrapper later.
 
 3. Bring over one small generated fragment slice if the measured performance looks promising.
