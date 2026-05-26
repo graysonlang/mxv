@@ -178,7 +178,7 @@ http://127.0.0.1:8000/webgpu.html
 http://127.0.0.1:8000/webgpu-direct.html
 ```
 
-The direct WebGPU page loads the MaterialX shaderball and the `San Giuseppe Bridge Split` HDR environment by default. It also accepts `material`, `shader`, `envSamples`, `envIntensity`, and `environment` query params for focused shader-bridge checks:
+The direct WebGPU page loads the MaterialX shaderball and the `San Giuseppe Bridge Split` HDR environment by default. In Naga mode, the radiance texture is uploaded with a generated mip chain so MaterialX `u_envRadianceMips` lookups can exercise rough and anisotropic environment sampling. It also accepts `material`, `shader`, `envSamples`, `envIntensity`, and `environment` query params for focused shader-bridge checks:
 
 ```text
 http://127.0.0.1:8000/webgpu-direct.html?material=pearl

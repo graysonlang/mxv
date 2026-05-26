@@ -1725,6 +1725,130 @@ function getEnvironmentIrradiancePath(environmentPath) {
   return environmentPath.replace('/Lights/', '/Lights/irradiance/');
 }
 
+function halfToFloat(value) {
+  const sign = value & 0x8000 ? -1 : 1;
+  const exponent = (value >> 10) & 0x1f;
+  const fraction = value & 0x03ff;
+
+  if (exponent === 0) {
+    return sign * 2 ** -14 * (fraction / 1024);
+  }
+  if (exponent === 0x1f) {
+    return fraction ? Number.NaN : sign * Number.POSITIVE_INFINITY;
+  }
+
+  return sign * 2 ** (exponent - 15) * (1 + fraction / 1024);
+}
+
+const float32Scratch = new Float32Array(1);
+const uint32Scratch = new Uint32Array(float32Scratch.buffer);
+
+function floatToHalf(value) {
+  if (Number.isNaN(value)) return 0x7e00;
+  if (value === Number.POSITIVE_INFINITY) return 0x7c00;
+  if (value === Number.NEGATIVE_INFINITY) return 0xfc00;
+
+  float32Scratch[0] = value;
+  const bits = uint32Scratch[0];
+  const sign = (bits >> 16) & 0x8000;
+  let exponent = ((bits >> 23) & 0xff) - 127 + 15;
+  let mantissa = bits & 0x7fffff;
+
+  if (exponent <= 0) {
+    if (exponent < -10) return sign;
+    mantissa = (mantissa | 0x800000) >> (1 - exponent);
+    return sign | ((mantissa + 0x1000) >> 13);
+  }
+
+  if (exponent >= 0x1f) {
+    return sign | 0x7c00;
+  }
+
+  const roundedMantissa = mantissa + 0x1000;
+  if (roundedMantissa & 0x800000) {
+    mantissa = 0;
+    exponent++;
+    if (exponent >= 0x1f) return sign | 0x7c00;
+  } else {
+    mantissa = roundedMantissa;
+  }
+
+  return sign | (exponent << 10) | (mantissa >> 13);
+}
+
+function createHdrMipLevels(hdr) {
+  const levels = [{
+    data: hdr.data,
+    height: hdr.height,
+    width: hdr.width,
+  }];
+  let current = levels[0];
+
+  while (current.width > 1 || current.height > 1) {
+    const width = Math.max(1, Math.floor(current.width / 2));
+    const height = Math.max(1, Math.floor(current.height / 2));
+    const data = new Uint16Array(width * height * 4);
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const sum = [0, 0, 0, 0];
+        let count = 0;
+
+        for (let offsetY = 0; offsetY < 2; offsetY++) {
+          for (let offsetX = 0; offsetX < 2; offsetX++) {
+            const srcX = Math.min(current.width - 1, x * 2 + offsetX);
+            const srcY = Math.min(current.height - 1, y * 2 + offsetY);
+            const srcIndex = (srcY * current.width + srcX) * 4;
+            for (let channel = 0; channel < 4; channel++) {
+              sum[channel] += halfToFloat(current.data[srcIndex + channel]);
+            }
+            count++;
+          }
+        }
+
+        const destIndex = (y * width + x) * 4;
+        for (let channel = 0; channel < 4; channel++) {
+          data[destIndex + channel] = floatToHalf(sum[channel] / count);
+        }
+      }
+    }
+
+    current = { data, height, width };
+    levels.push(current);
+  }
+
+  return levels;
+}
+
+function writeTextureMipLevel(device, texture, mipLevel, mip, bytesPerPixel) {
+  const rowBytes = mip.width * bytesPerPixel;
+
+  if (mip.height === 1 || rowBytes % 256 === 0) {
+    device.queue.writeTexture(
+      { mipLevel, texture },
+      mip.data,
+      { bytesPerRow: rowBytes, rowsPerImage: mip.height },
+      { height: mip.height, width: mip.width },
+    );
+    return;
+  }
+
+  const paddedRowBytes = alignTo(rowBytes, 256);
+  const sourceBytes = new Uint8Array(mip.data.buffer, mip.data.byteOffset, mip.data.byteLength);
+  const paddedBytes = new Uint8Array(paddedRowBytes * mip.height);
+  for (let row = 0; row < mip.height; row++) {
+    const sourceStart = row * rowBytes;
+    paddedBytes.set(sourceBytes.subarray(sourceStart, sourceStart + rowBytes), row * paddedRowBytes);
+  }
+
+  device.queue.writeTexture(
+    { mipLevel, texture },
+    paddedBytes,
+    { bytesPerRow: paddedRowBytes, rowsPerImage: mip.height },
+    { height: mip.height, width: mip.width },
+  );
+}
+
 async function loadHdrTexture(url) {
   const texture = await new HDRLoader().loadAsync(url);
   const { data, height, width } = texture.image || {};
@@ -1742,26 +1866,35 @@ async function loadHdrTexture(url) {
   };
 }
 
-function createHdrTexture(device, label, hdr) {
+function createHdrTexture(device, label, hdr, options = {}) {
   const bytesPerPixel = 8;
+  const mipLevels = options.generateMipmaps
+    ? createHdrMipLevels(hdr)
+    : [{
+        data: hdr.data,
+        height: hdr.height,
+        width: hdr.width,
+      }];
   const texture = device.createTexture({
     format: 'rgba16float',
     label,
+    mipLevelCount: mipLevels.length,
     size: [hdr.width, hdr.height],
     usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING,
   });
-  device.queue.writeTexture(
-    { texture },
-    hdr.data,
-    { bytesPerRow: hdr.width * bytesPerPixel, rowsPerImage: hdr.height },
-    { height: hdr.height, width: hdr.width },
-  );
-  return texture;
+  for (const [mipLevel, mip] of mipLevels.entries()) {
+    writeTextureMipLevel(device, texture, mipLevel, mip, bytesPerPixel);
+  }
+  return {
+    mipLevelCount: mipLevels.length,
+    texture,
+  };
 }
 
 function createPlaceholderEnvironmentTextures(device) {
   return {
     envIrradianceTexture: createPlaceholderTexture(device, 'MaterialX env irradiance placeholder', [0.62, 0.66, 0.68, 1]),
+    envRadianceMipCount: 1,
     envRadianceTexture: createPlaceholderTexture(device, 'MaterialX env radiance placeholder', [0.32, 0.36, 0.42, 1]),
   };
 }
@@ -1776,16 +1909,17 @@ async function createEnvironmentTextures(device) {
       loadHdrTexture(requestedEnvironment),
       loadHdrTexture(getEnvironmentIrradiancePath(requestedEnvironment)),
     ]);
-    const envIrradianceTexture = createHdrTexture(device, 'MaterialX env irradiance HDR', irradiance);
-    const envRadianceTexture = createHdrTexture(device, 'MaterialX env radiance HDR', radiance);
+    const envIrradiance = createHdrTexture(device, 'MaterialX env irradiance HDR', irradiance);
+    const envRadiance = createHdrTexture(device, 'MaterialX env radiance HDR', radiance, { generateMipmaps: true });
 
     setMetric('environment', environmentLabel);
-    setMetric('environmentSize', `${radiance.width}x${radiance.height} / ${irradiance.width}x${irradiance.height}`);
+    setMetric('environmentSize', `${radiance.width}x${radiance.height} mips ${envRadiance.mipLevelCount} / ${irradiance.width}x${irradiance.height}`);
     recordDuration('environmentLoad', start);
 
     return {
-      envIrradianceTexture,
-      envRadianceTexture,
+      envIrradianceTexture: envIrradiance.texture,
+      envRadianceMipCount: envRadiance.mipLevelCount,
+      envRadianceTexture: envRadiance.texture,
     };
   } catch (error) {
     console.warn('Could not load direct WebGPU HDR environment, using placeholder lighting.', error);
@@ -1993,7 +2127,7 @@ function getCameraPosition() {
   ];
 }
 
-function writeFrameUniforms(privateVertexData, privatePixelData, dimensions) {
+function writeFrameUniforms(privateVertexData, privatePixelData, dimensions, envRadianceMipCount = 1) {
   const aspect = dimensions.width / dimensions.height;
   const projection = new Float32Array(16);
   const view = new Float32Array(16);
@@ -2018,7 +2152,7 @@ function writeFrameUniforms(privateVertexData, privatePixelData, dimensions) {
     0, 0, 0, 1,
   ], 0);
   privatePixelData.floats[16] = envLightIntensity;
-  privatePixelData.ints[17] = 1;
+  privatePixelData.ints[17] = envRadianceMipCount;
   privatePixelData.ints[18] = envRadianceSamples;
   privatePixelData.ints[19] = 0;
   privatePixelData.floats.set(cameraPosition, 20);
@@ -2491,7 +2625,7 @@ async function main() {
   setStatus('Ready');
 
   function render(now) {
-    writeFrameUniforms(privateVertexData, privatePixelData, dimensions);
+    writeFrameUniforms(privateVertexData, privatePixelData, dimensions, environmentTextures.envRadianceMipCount);
     device.queue.writeBuffer(privateVertexBuffer, 0, privateVertexData);
     device.queue.writeBuffer(privatePixelBuffer, 0, privatePixelData.bytes);
 

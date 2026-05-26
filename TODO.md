@@ -8,8 +8,8 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 
 - [ ] Continue the direct WebGPU MaterialX shader spike.
   - Status: in progress.
-  - Current shape: `/webgpu-direct.html` renders the MaterialX shaderball with a direct WebGPU pipeline, generated sample material values, generated vertex-stage contract validation, and MaterialX-shaped public/private uniform bindings.
-  - Main gap: the fragment stage is still a hand-authored browser WGSL approximation, not a translation of the generated MaterialX pixel shader.
+  - Current shape: `/webgpu-direct.html` renders the MaterialX shaderball with a direct WebGPU pipeline, generated sample material values, generated vertex-stage contract validation, MaterialX-shaped public/private uniform bindings, HDR environment textures, and an optional Naga-translated generated WGSL pixel path.
+  - Main gap: the Naga path still needs visual and performance evaluation against the WebGL viewer before it can replace the hand-authored bridge as the primary spike path.
 
 ## Done
 
@@ -46,11 +46,12 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 - [x] Extend the Naga verifier to compare generated bindings and entry points against the direct WebGPU harness and compile all six samples as render pipelines.
 - [x] Add a direct WebGPU `shader=naga` mode that draws the shaderball with the Naga-generated vertex and pixel WGSL fixtures.
 - [x] Add sRGB display encoding and environment sample/intensity controls for the direct Naga path.
+- [x] Generate and bind HDR radiance mip levels for the direct Naga path so generated `u_envRadianceMips` / `textureSampleLevel` environment lookups are meaningful.
 
 ## In Progress
 
 - [ ] Phase 3 direct WebGPU bridge.
-  - Status: binding contract is active; generated fragment source is validated for the expected standard-surface shape; the browser WGSL fragment path now mirrors the generated outer `main()` to standard-surface call flow; a narrow custom translator compiles a first helper-function slice; Naga translates the full emitted shader fixtures offline; Chrome accepts the generated Naga vertex and pixel modules after the bool-uniform and subsurface-radius pre-passes; all six translated samples compile as render pipelines with the direct WebGPU bind group layout; the direct viewer can now draw the shaderball through the Naga-generated WGSL path with display encoding and runtime environment sample controls.
+  - Status: binding contract is active; generated fragment source is validated for the expected standard-surface shape; the browser WGSL fragment path now mirrors the generated outer `main()` to standard-surface call flow; a narrow custom translator compiles a first helper-function slice; Naga translates the full emitted shader fixtures offline; Chrome accepts the generated Naga vertex and pixel modules after the bool-uniform and subsurface-radius pre-passes; all six translated samples compile as render pipelines with the direct WebGPU bind group layout; the direct viewer can now draw the shaderball through the Naga-generated WGSL path with display encoding, runtime environment sample controls, and mipmapped HDR radiance lookups.
   - Next decision: compare visual parity and performance between `shader=bridge`, `shader=naga&envSamples=4`, and `shader=naga&envSamples=16`, then decide whether Naga becomes the primary WebGPU shader path for this spike.
 
 - [ ] Performance comparison against the WebGL viewer.
@@ -76,7 +77,7 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
    - Goal: prove non-environment texture and sampler bindings before investing further in shader translation.
 
 5. Improve environment parity when visual comparison becomes important.
-   - Continue from the loaded HDR radiance/irradiance textures toward viewer-equivalent environment sampling and intensity.
+   - Continue from the loaded HDR radiance/irradiance textures and generated radiance mips toward viewer-equivalent environment prefiltering and intensity.
    - Keep this behind the performance/fidelity evaluation so it does not block shader-contract learning.
 
 6. Expand verification once the fragment path grows.
