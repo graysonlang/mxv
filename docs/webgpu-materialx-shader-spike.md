@@ -304,6 +304,8 @@ The direct pipeline includes a `depth24plus` depth attachment and uses single-si
 
 The direct page now loads the filtered MaterialX `san_giuseppe_bridge_split.hdr` environment by default, plus the matching irradiance HDR from `resources/Lights/irradiance`. These are uploaded as `rgba16float` WebGPU textures and sampled through simple latitude-longitude helper functions in the bridge. The radiance texture is also uploaded with a CPU-generated mip chain, and the real mip count is written to generated `u_envRadianceMips` so Naga-translated `textureSampleLevel` environment lookups can follow the MaterialX LOD path. The sampling and mip generation are still approximations rather than MaterialX's full environment prefiltering implementation, but bindings 2-5 now carry real HDR data instead of constant placeholder colors.
 
+The direct page can draw the radiance HDR as the scene background with the `Environment` checkbox or `drawEnvironment=1` URL parameter. This mirrors the desktop viewer's `--drawEnvironment` option and keeps the default off. The background pass uses a fullscreen WebGPU draw, camera-derived view rays, the same lat-long radiance texture, and the current environment intensity.
+
 The direct page now loads the MaterialX runtime and runs `WgslShaderGenerator` for each sample. Since this runtime still emits Vulkan-style GLSL rather than browser WGSL, the page does not feed the generated pixel source directly into WebGPU yet. It does use the generated shader object to extract `PublicUniforms_pixel` and upload the generated standard-surface values into the WebGPU uniform buffer. The initial hand-authored JS values remain as a fallback while shadergen is loading or if shadergen fails.
 
 The generated vertex stage is now consumed through a narrow adapter. The direct page validates the expected MaterialX vertex contract from the generated Vulkan-style GLSL source, then rebuilds the browser WebGPU pipeline with an equivalent WGSL vertex entry point. This keeps the generated attribute, uniform, transform, and varying contract live without starting a general shader translator.
@@ -343,6 +345,7 @@ http://127.0.0.1:8000/webgpu-direct.html?material=standard
 http://127.0.0.1:8000/webgpu-direct.html?material=standard&shader=naga
 http://127.0.0.1:8000/webgpu-direct.html?material=brushedMetal&shader=naga&envSamples=4
 http://127.0.0.1:8000/webgpu-direct.html?material=carPaint&shader=naga&envSamples=16
+http://127.0.0.1:8000/webgpu-direct.html?material=carPaint&shader=naga&drawEnvironment=1
 http://127.0.0.1:8000/webgpu-direct.html?material=pearl
 http://127.0.0.1:8000/webgpu-direct.html?material=brushedMetal
 http://127.0.0.1:8000/webgpu-direct.html?material=carPaint

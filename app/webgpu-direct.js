@@ -32,14 +32,20 @@ const requestedShaderMode = queryParams.get('shader') || queryParams.get('shader
 let activeShaderMode = Object.hasOwn(shaderModeLabels, requestedShaderMode) ? requestedShaderMode : 'bridge';
 const defaultEnvRadianceSamples = Number(queryParams.get('envSamples') || queryParams.get('samples') || 4);
 const defaultEnvLightIntensity = Number(queryParams.get('envIntensity') || 1);
+const defaultDrawEnvironment = parseBooleanQueryParam(
+  queryParams.get('drawEnvironment') || queryParams.get('envBackground'),
+  false,
+);
 let envRadianceSamples = Number.isFinite(defaultEnvRadianceSamples)
   ? Math.max(0, Math.min(16, Math.round(defaultEnvRadianceSamples)))
   : 4;
 let envLightIntensity = Number.isFinite(defaultEnvLightIntensity)
   ? Math.max(0, Math.min(8, defaultEnvLightIntensity))
   : 1;
+let drawEnvironment = defaultDrawEnvironment;
 const privateVertexFloatCount = 48;
 const privatePixelByteLength = 96;
+const environmentBackgroundFloatCount = 16;
 const lightDataFloatCount = 4;
 const materialXBoolUniformWarning = 'WGSL does not allow boolean types to be stored in uniform or storage address spaces.';
 const materialXKnownWarnings = new Set();
@@ -503,6 +509,65 @@ ${standardSurfaceBridgeSource}
 ${fragmentBridgeMainSource}
 `;
 
+const environmentBackgroundSource = `
+struct EnvironmentBackgroundUniforms {
+  cameraRight: vec4<f32>,
+  cameraUp: vec4<f32>,
+  cameraForward: vec4<f32>,
+  params: vec4<f32>,
+};
+
+@group(0) @binding(0) var<uniform> u_background: EnvironmentBackgroundUniforms;
+@group(0) @binding(1) var u_envRadianceTexture: texture_2d<f32>;
+@group(0) @binding(2) var u_envRadianceSampler: sampler;
+
+struct BackgroundVertexOutput {
+  @builtin(position) clipPosition: vec4<f32>,
+  @location(0) ndc: vec2<f32>,
+};
+
+@vertex
+fn vertexMain(@builtin(vertex_index) vertexIndex: u32) -> BackgroundVertexOutput {
+  let positions = array<vec2<f32>, 3>(
+    vec2<f32>(-1.0, -1.0),
+    vec2<f32>(3.0, -1.0),
+    vec2<f32>(-1.0, 3.0),
+  );
+  let position = positions[vertexIndex];
+  var output: BackgroundVertexOutput;
+  output.clipPosition = vec4<f32>(position, 0.0, 1.0);
+  output.ndc = position;
+  return output;
+}
+
+fn mx_srgb_encode(linearColor: vec3<f32>) -> vec3<f32> {
+  let lo = linearColor * 12.92;
+  let hi = pow(linearColor, vec3<f32>(1.0 / 2.4)) * 1.055 - vec3<f32>(0.055);
+  return select(hi, lo, linearColor <= vec3<f32>(0.0031308));
+}
+
+fn mx_latlong_uv(direction: vec3<f32>) -> vec2<f32> {
+  let normalizedDirection = normalize(direction);
+  let u = atan2(normalizedDirection.x, -normalizedDirection.z) * 0.15915494309189535 + 0.5;
+  let v = acos(clamp(normalizedDirection.y, -1.0, 1.0)) * 0.3183098861837907;
+  return vec2<f32>(u, v);
+}
+
+@fragment
+fn fragmentMain(input: BackgroundVertexOutput) -> @location(0) vec4<f32> {
+  let aspect = u_background.params.x;
+  let tanHalfFov = u_background.params.y;
+  let intensity = u_background.params.z;
+  let direction = normalize(
+    u_background.cameraForward.xyz +
+    u_background.cameraRight.xyz * input.ndc.x * aspect * tanHalfFov +
+    u_background.cameraUp.xyz * input.ndc.y * tanHalfFov
+  );
+  let color = textureSampleLevel(u_envRadianceTexture, u_envRadianceSampler, mx_latlong_uv(direction), 0.0).rgb * intensity;
+  return vec4<f32>(mx_srgb_encode(max(color, vec3<f32>(0.0))), 1.0);
+}
+`;
+
 const viewState = {
   distance: initialDistance,
   isDragging: false,
@@ -544,6 +609,11 @@ function installWebGpuErrorReporting(device) {
 
 function alignTo(value, alignment) {
   return Math.ceil(value / alignment) * alignment;
+}
+
+function parseBooleanQueryParam(value, fallback = false) {
+  if (value == null) return fallback;
+  return /^(1|true|yes|on)$/i.test(String(value));
 }
 
 function getUniformTypeLayout(type) {
@@ -2065,6 +2135,47 @@ async function createPipeline(device, format, options = {}) {
   }
 }
 
+async function createEnvironmentBackgroundPipeline(device, format) {
+  device.pushErrorScope('validation');
+  try {
+    const module = device.createShaderModule({
+      code: environmentBackgroundSource,
+      label: 'Direct WebGPU environment background shader',
+    });
+    const pipeline = await device.createRenderPipelineAsync({
+      depthStencil: {
+        depthCompare: 'always',
+        depthWriteEnabled: false,
+        format: depthFormat,
+      },
+      fragment: {
+        entryPoint: 'fragmentMain',
+        module,
+        targets: [{ format }],
+      },
+      label: 'Direct WebGPU environment background pipeline',
+      layout: 'auto',
+      primitive: {
+        topology: 'triangle-list',
+      },
+      vertex: {
+        entryPoint: 'vertexMain',
+        module,
+      },
+    });
+    const error = await device.popErrorScope();
+    if (error) {
+      throw error;
+    }
+    return pipeline;
+  } catch (error) {
+    const scopedError = await device.popErrorScope().catch(() => null);
+    const reportedError = scopedError || error;
+    recordWebGpuError('environment background pipeline validation', reportedError);
+    throw reportedError;
+  }
+}
+
 async function validateGeneratedFragmentTranslation(device, wgsl) {
   const source = `${wgsl}
 
@@ -2173,6 +2284,19 @@ function writeFrameUniforms(privateVertexData, privatePixelData, dimensions, env
   privatePixelData.ints[23] = 1;
 }
 
+function writeEnvironmentBackgroundUniforms(backgroundData, dimensions) {
+  const aspect = dimensions.width / dimensions.height;
+  const cameraPosition = getCameraPosition();
+  const forward = normalize(cameraPosition.map(component => -component));
+  const right = normalize(cross(forward, [0, 1, 0]));
+  const up = cross(right, forward);
+
+  backgroundData.set([right[0], right[1], right[2], 0], 0);
+  backgroundData.set([up[0], up[1], up[2], 0], 4);
+  backgroundData.set([forward[0], forward[1], forward[2], 0], 8);
+  backgroundData.set([aspect, Math.tan(cameraFov / 2), envLightIntensity, 0], 12);
+}
+
 function createPrivatePixelUniformData() {
   const buffer = new ArrayBuffer(privatePixelByteLength);
   return {
@@ -2253,6 +2377,7 @@ function bindShaderModeSelect(onModeChanged) {
 function bindEnvironmentControls() {
   const sampleSelect = document.getElementById('env-radiance-samples');
   const intensityInput = document.getElementById('env-light-intensity');
+  const drawEnvironmentInput = document.getElementById('draw-environment');
 
   if (sampleSelect) {
     sampleSelect.value = String(envRadianceSamples);
@@ -2275,6 +2400,14 @@ function bindEnvironmentControls() {
         : 1;
       intensityInput.value = String(envLightIntensity);
       updateQueryParam('envIntensity', envLightIntensity);
+    });
+  }
+
+  if (drawEnvironmentInput) {
+    drawEnvironmentInput.checked = drawEnvironment;
+    drawEnvironmentInput.addEventListener('change', () => {
+      drawEnvironment = drawEnvironmentInput.checked;
+      updateQueryParam('drawEnvironment', drawEnvironment ? '1' : '0');
     });
   }
 }
@@ -2519,6 +2652,26 @@ function createDirectBindGroup(device, pipeline, resources) {
   });
 }
 
+function createEnvironmentBackgroundBindGroup(device, pipeline, resources) {
+  return device.createBindGroup({
+    entries: [
+      {
+        binding: 0,
+        resource: { buffer: resources.environmentBackgroundBuffer },
+      },
+      {
+        binding: 1,
+        resource: resources.envRadianceTexture.createView(),
+      },
+      {
+        binding: 2,
+        resource: resources.envSampler,
+      },
+    ],
+    layout: pipeline.getBindGroupLayout(0),
+  });
+}
+
 async function main() {
   const canvas = document.getElementById('direct-webgpu-canvas');
   const context = canvas.getContext('webgpu');
@@ -2534,6 +2687,7 @@ async function main() {
   let depthTexture = createDepthTexture(device, dimensions);
   let bridgeShaderSource = shaderSource;
   let pipeline = await createPipeline(device, format);
+  const environmentBackgroundPipeline = await createEnvironmentBackgroundPipeline(device, format);
 
   const meshStart = performance.now();
   const geometry = await loadGeometry();
@@ -2546,11 +2700,13 @@ async function main() {
 
   const privateVertexData = new Float32Array(privateVertexFloatCount);
   const privatePixelData = createPrivatePixelUniformData();
+  const environmentBackgroundData = new Float32Array(environmentBackgroundFloatCount);
   const publicUniformData = createMaterialUniformData();
   const lightData = new Float32Array(lightDataFloatCount);
   lightData.set([0.45, -0.8, -0.35, 0], 0);
   const privateVertexBuffer = createUniformBuffer(device, 'MaterialX PrivateUniforms vertex', privateVertexData);
   const privatePixelBuffer = createUniformBuffer(device, 'MaterialX PrivateUniforms pixel', privatePixelData.bytes);
+  const environmentBackgroundBuffer = createUniformBuffer(device, 'MaterialX environment background uniforms', environmentBackgroundData);
   const publicUniformBuffer = createUniformBuffer(device, 'MaterialX PublicUniforms pixel port table', publicUniformData.bytes);
   const lightDataBuffer = createUniformBuffer(device, 'MaterialX LightData pixel placeholder', lightData);
   const envSampler = device.createSampler({
@@ -2564,6 +2720,7 @@ async function main() {
   setMetric('contract', `bindings 0-7 / private ${privatePixelByteLength} B`);
   const bindGroupResources = {
     ...environmentTextures,
+    environmentBackgroundBuffer,
     envSampler,
     lightDataBuffer,
     privatePixelBuffer,
@@ -2571,6 +2728,7 @@ async function main() {
     publicUniformBuffer,
   };
   let bindGroup = createDirectBindGroup(device, pipeline, bindGroupResources);
+  const environmentBackgroundBindGroup = createEnvironmentBackgroundBindGroup(device, environmentBackgroundPipeline, bindGroupResources);
   let pipelineSwitchId = 0;
   bindEnvironmentControls();
   const applyPipelineForShaderMode = async (materialId, options = {}) => {
@@ -2641,8 +2799,10 @@ async function main() {
 
   function render(now) {
     writeFrameUniforms(privateVertexData, privatePixelData, dimensions, environmentTextures.envRadianceMipCount);
+    writeEnvironmentBackgroundUniforms(environmentBackgroundData, dimensions);
     device.queue.writeBuffer(privateVertexBuffer, 0, privateVertexData);
     device.queue.writeBuffer(privatePixelBuffer, 0, privatePixelData.bytes);
+    device.queue.writeBuffer(environmentBackgroundBuffer, 0, environmentBackgroundData);
 
     const encoder = device.createCommandEncoder();
     const pass = encoder.beginRenderPass({
@@ -2661,6 +2821,11 @@ async function main() {
         view: depthTexture.createView(),
       },
     });
+    if (drawEnvironment) {
+      pass.setPipeline(environmentBackgroundPipeline);
+      pass.setBindGroup(0, environmentBackgroundBindGroup);
+      pass.draw(3);
+    }
     pass.setPipeline(pipeline);
     pass.setBindGroup(0, bindGroup);
     pass.setVertexBuffer(0, vertexBuffer);

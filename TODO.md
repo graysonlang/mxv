@@ -50,6 +50,7 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 - [x] Add the upstream Standard Surface car-paint sample as a visual parity check that exercises clear coat and anisotropy without emission clipping.
 - [x] Capture the MaterialX desktop viewer environment-lighting defaults for the Phase 3 comparison: FIS by default, `envSampleCount` 16, and `envLightIntensity` 1.
 - [x] Match the direct WebGPU environment sampler to the desktop viewer's lat-long policy: repeat in U, clamp in V, and linear mip filtering.
+- [x] Add a direct WebGPU environment-background toggle with `drawEnvironment=1`, matching the desktop viewer default of off.
 
 ## In Progress
 
@@ -93,5 +94,6 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 - [ ] Decide whether WebGPU belongs in the main R3F product canvas or a separate pop-out material editor.
 - [ ] Investigate Three.js WebGPU/TSL integration only if direct WebGPU proves useful but too isolated.
 - [ ] Explore GPU-side baking or precomputation after the basic renderer path has measured value.
+- [ ] Add MaterialX-aligned dynamic direct lighting and shadow maps after Naga visual/performance value is clearer.
 - [ ] Evaluate displacement/geometry expressivity separately; WebGPU does not automatically provide tessellation or geometry shader stages.
 - [ ] Finalize `@graysonlang/mx` package API and publishing/versioning once the runtime shape settles.
