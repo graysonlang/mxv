@@ -31,6 +31,7 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 - [x] Add a generated fragment-source contract probe for the standard-surface function signature and generated `main()` call argument order.
 - [x] Reshape the browser WGSL fragment bridge around a generated-style `NG_standard_surface_surfaceshader_100` call.
 - [x] Port low-risk generated helper names into the WGSL bridge: `mx_square`, `mx_pow5`, `mx_ior_to_f0`, and `mx_fresnel_schlick`.
+- [x] Validate ported fragment helpers against the live generated pixel source and report adapter coverage in the HUD/verifier.
 
 ## In Progress
 

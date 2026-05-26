@@ -194,6 +194,12 @@ const publicUniformByteLength = materialUniformLayout.byteLength;
 const publicUniformStructSource = createPublicUniformStructSource();
 const materialAccessorSource = createMaterialAccessorSource();
 const generatedStandardSurfaceFunctionName = 'NG_standard_surface_surfaceshader_100';
+const portedGeneratedPixelHelpers = [
+  'mx_square',
+  'mx_pow5',
+  'mx_ior_to_f0',
+  'mx_fresnel_schlick',
+];
 const privatePixelUniformPorts = [
   { type: 'matrix44', variable: 'u_envMatrix' },
   { type: 'float', variable: 'u_envLightIntensity' },
@@ -1047,9 +1053,18 @@ function validateGeneratedPixelSource(source, sampleId) {
     throw new Error(`Generated fragment main call changed for "${sampleId}": ${mainCallMismatches.join('; ')}.`);
   }
 
+  const missingPortedHelpers = portedGeneratedPixelHelpers.filter((helperName) => {
+    const helperPattern = new RegExp(`\\b${helperName}\\s*\\(`);
+    return !helperPattern.test(source);
+  });
+  if (missingPortedHelpers.length) {
+    throw new Error(`Generated pixel source no longer contains ported helper functions for "${sampleId}": ${missingPortedHelpers.join(', ')}.`);
+  }
+
   return {
     functionCount: countGeneratedFunctions(source),
     mainCallArgumentCount: mainCallArguments.length,
+    portedHelperCount: portedGeneratedPixelHelpers.length,
     standardSurfaceParameterCount: signatureNames.length,
   };
 }
@@ -1132,7 +1147,7 @@ async function initializeMaterialXShaderSupport(materialControl, pipelineControl
     setMetric('shaderContract', activeSample ? `${activeSample.uniformCount} public ports / ${publicUniformByteLength} B` : '-');
     setMetric('contract', activeSample ? `bindings 0-7 / ${activeSample.privateUniformCount} private ports / ${privatePixelByteLength} B` : '-');
     setMetric('shaderSource', activeSample ? `${activeSample.vertexLines}v / ${activeSample.pixelLines}p lines` : '-');
-    setMetric('fragmentAdapter', activeSample ? `${activeSample.pixelContract.functionCount} GLSL funcs / ${activeSample.pixelContract.standardSurfaceParameterCount} params` : '-');
+    setMetric('fragmentAdapter', activeSample ? `${activeSample.pixelContract.portedHelperCount}/${activeSample.pixelContract.functionCount} funcs / ${activeSample.pixelContract.standardSurfaceParameterCount} params` : '-');
     setMetric('shaderNotes', materialXKnownWarnings.size ? 'bool uniform mapped' : 'none');
     materialControl.refreshOptions();
     materialControl.applyMaterial(activeMaterialId, { updateUrl: false });

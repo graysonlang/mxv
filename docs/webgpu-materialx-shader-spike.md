@@ -296,7 +296,7 @@ The generated fragment source is also probed before the bridge reports shadergen
 
 The browser WGSL fragment path now mirrors that generated outer shape. It builds generated-style normal/tangent locals, calls a WGSL bridge function named `NG_standard_surface_surfaceshader_100`, and returns a generated-style `out1` color. The bridge function still contains the compact hand-authored standard-surface approximation, but the call boundary now matches the generated shader flow closely enough for the next closure-function port to happen inside that function rather than around it.
 
-The first generated helper slice has been ported into the WGSL bridge with MaterialX-compatible names: `mx_square`, `mx_pow5`, `mx_ior_to_f0`, and `mx_fresnel_schlick`. The remaining approximation-specific helpers are still named with an `mx_bridge_` prefix so it is clear which pieces are not direct generated-function ports yet.
+The first generated helper slice has been ported into the WGSL bridge with MaterialX-compatible names: `mx_square`, `mx_pow5`, `mx_ior_to_f0`, and `mx_fresnel_schlick`. The fragment adapter validates that those helper names still exist in the live generated pixel source and reports helper coverage in the HUD. The remaining approximation-specific helpers are still named with an `mx_bridge_` prefix so it is clear which pieces are not direct generated-function ports yet.
 
 MaterialX emits a known warning for the `standard_surface.thin_walled` boolean port because WGSL does not allow booleans in uniform/storage address spaces. The direct page filters that specific Emscripten `printErr` message and surfaces it as `Shader Notes: bool uniform mapped`; unknown MaterialX stderr output is still forwarded to the console.
 

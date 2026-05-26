@@ -259,7 +259,7 @@ function validateReadyState(state) {
   if (!/GLSL -> WGSL/.test(metrics.vertexAdapter)) {
     failures.push(`vertex adapter is ${metrics.vertexAdapter || '<blank>'}`);
   }
-  if (!/GLSL funcs \/ \d+ params/.test(metrics.fragmentAdapter)) {
+  if (!/\d+\/\d+ funcs \/ \d+ params/.test(metrics.fragmentAdapter)) {
     failures.push(`fragment adapter is ${metrics.fragmentAdapter || '<blank>'}`);
   }
   if (!metrics.firstFrame || metrics.firstFrame === '-') failures.push('first frame metric did not populate');
