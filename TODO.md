@@ -45,12 +45,13 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 - [x] Add a narrow Naga pre-pass for the generated subsurface `fwidth` path, replacing curvature-derived radius with a derivative-free material radius fallback for the spike.
 - [x] Extend the Naga verifier to compare generated bindings and entry points against the direct WebGPU harness and compile all six samples as render pipelines.
 - [x] Add a direct WebGPU `shader=naga` mode that draws the shaderball with the Naga-generated vertex and pixel WGSL fixtures.
+- [x] Add sRGB display encoding and environment sample/intensity controls for the direct Naga path.
 
 ## In Progress
 
 - [ ] Phase 3 direct WebGPU bridge.
-  - Status: binding contract is active; generated fragment source is validated for the expected standard-surface shape; the browser WGSL fragment path now mirrors the generated outer `main()` to standard-surface call flow; a narrow custom translator compiles a first helper-function slice; Naga translates the full emitted shader fixtures offline; Chrome accepts the generated Naga vertex and pixel modules after the bool-uniform and subsurface-radius pre-passes; all six translated samples compile as render pipelines with the direct WebGPU bind group layout; the direct viewer can now draw the shaderball through the Naga-generated WGSL path.
-  - Next decision: compare visual parity and performance between `shader=bridge` and `shader=naga`, then decide whether Naga becomes the primary WebGPU shader path for this spike.
+  - Status: binding contract is active; generated fragment source is validated for the expected standard-surface shape; the browser WGSL fragment path now mirrors the generated outer `main()` to standard-surface call flow; a narrow custom translator compiles a first helper-function slice; Naga translates the full emitted shader fixtures offline; Chrome accepts the generated Naga vertex and pixel modules after the bool-uniform and subsurface-radius pre-passes; all six translated samples compile as render pipelines with the direct WebGPU bind group layout; the direct viewer can now draw the shaderball through the Naga-generated WGSL path with display encoding and runtime environment sample controls.
+  - Next decision: compare visual parity and performance between `shader=bridge`, `shader=naga&envSamples=4`, and `shader=naga&envSamples=16`, then decide whether Naga becomes the primary WebGPU shader path for this spike.
 
 - [ ] Performance comparison against the WebGL viewer.
   - Status: direct page exposes first-frame, frame-time, FPS, material upload, switch-frame, switch-GPU, average, and p95 metrics.
@@ -64,6 +65,7 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 2. Evaluate the Naga path before growing the custom translator.
    - Compare visual parity against the current hand-authored bridge before replacing any live path.
    - Run the material-switch benchmark in Naga mode and compare pipeline rebuild cost against bridge-mode uniform-only switching.
+   - Measure steady FPS for complex materials at `envSamples=4`, `8`, and `16`.
    - If it holds, consider a build-time wrapper first and a WASM wrapper later.
 
 3. Bring over one small generated fragment slice if the measured performance looks promising.

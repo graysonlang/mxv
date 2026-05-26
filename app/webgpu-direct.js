@@ -30,6 +30,14 @@ const shaderModeLabels = {
 };
 const requestedShaderMode = queryParams.get('shader') || queryParams.get('shaderMode');
 let activeShaderMode = Object.hasOwn(shaderModeLabels, requestedShaderMode) ? requestedShaderMode : 'bridge';
+const defaultEnvRadianceSamples = Number(queryParams.get('envSamples') || queryParams.get('samples') || 4);
+const defaultEnvLightIntensity = Number(queryParams.get('envIntensity') || 1);
+let envRadianceSamples = Number.isFinite(defaultEnvRadianceSamples)
+  ? Math.max(0, Math.min(16, Math.round(defaultEnvRadianceSamples)))
+  : 4;
+let envLightIntensity = Number.isFinite(defaultEnvLightIntensity)
+  ? Math.max(0, Math.min(8, defaultEnvLightIntensity))
+  : 1;
 const privateVertexFloatCount = 48;
 const privatePixelByteLength = 96;
 const lightDataFloatCount = 4;
@@ -2009,9 +2017,9 @@ function writeFrameUniforms(privateVertexData, privatePixelData, dimensions) {
     0, 0, -1, 0,
     0, 0, 0, 1,
   ], 0);
-  privatePixelData.floats[16] = 1;
+  privatePixelData.floats[16] = envLightIntensity;
   privatePixelData.ints[17] = 1;
-  privatePixelData.ints[18] = 16;
+  privatePixelData.ints[18] = envRadianceSamples;
   privatePixelData.ints[19] = 0;
   privatePixelData.floats.set(cameraPosition, 20);
   privatePixelData.ints[23] = 1;
@@ -2094,6 +2102,35 @@ function bindShaderModeSelect(onModeChanged) {
   };
 }
 
+function bindEnvironmentControls() {
+  const sampleSelect = document.getElementById('env-radiance-samples');
+  const intensityInput = document.getElementById('env-light-intensity');
+
+  if (sampleSelect) {
+    sampleSelect.value = String(envRadianceSamples);
+    sampleSelect.addEventListener('change', () => {
+      const nextSamples = Number(sampleSelect.value);
+      envRadianceSamples = Number.isFinite(nextSamples)
+        ? Math.max(0, Math.min(16, Math.round(nextSamples)))
+        : 4;
+      sampleSelect.value = String(envRadianceSamples);
+      updateQueryParam('envSamples', envRadianceSamples);
+    });
+  }
+
+  if (intensityInput) {
+    intensityInput.value = String(envLightIntensity);
+    intensityInput.addEventListener('change', () => {
+      const nextIntensity = Number(intensityInput.value);
+      envLightIntensity = Number.isFinite(nextIntensity)
+        ? Math.max(0, Math.min(8, nextIntensity))
+        : 1;
+      intensityInput.value = String(envLightIntensity);
+      updateQueryParam('envIntensity', envLightIntensity);
+    });
+  }
+}
+
 async function fetchTextResource(url, label) {
   const response = await fetch(url);
   if (!response.ok) {
@@ -2102,13 +2139,28 @@ async function fetchTextResource(url, label) {
   return response.text();
 }
 
+function encodeNagaFragmentOutput(source) {
+  const pattern = /(\n\s*)return FragmentOutput\(([^)]+)\);(\n\})\s*$/;
+  const adapted = source.replace(pattern, (match, indent, outputExpression, suffix) => {
+    const output = outputExpression.trim();
+    return `${indent}let mxv_encodedOutput = vec4<f32>(mx_srgb_encode(max(${output}.rgb, vec3<f32>(0.0))), ${output}.a);${indent}return FragmentOutput(mxv_encodedOutput);${suffix}`;
+  });
+
+  if (adapted === source) {
+    throw new Error('Naga fragment output shape changed; could not apply display encoding.');
+  }
+
+  return adapted;
+}
+
 async function loadNagaShaderPair(materialId) {
   const sampleId = Object.hasOwn(materialSamples, materialId) ? materialId : 'standard';
   const baseUrl = new URL(`${encodeURIComponent(sampleId)}/`, nagaShaderBaseUrl);
-  const [vertexSource, fragmentSource] = await Promise.all([
+  const [vertexSource, rawFragmentSource] = await Promise.all([
     fetchTextResource(new URL('vertex.wgsl', baseUrl), `${sampleId} Naga vertex WGSL`),
     fetchTextResource(new URL('pixel.wgsl', baseUrl), `${sampleId} Naga pixel WGSL`),
   ]);
+  const fragmentSource = encodeNagaFragmentOutput(rawFragmentSource);
 
   return {
     fragmentLineCount: fragmentSource.split('\n').length,
@@ -2371,6 +2423,7 @@ async function main() {
   };
   let bindGroup = createDirectBindGroup(device, pipeline, bindGroupResources);
   let pipelineSwitchId = 0;
+  bindEnvironmentControls();
   const applyPipelineForShaderMode = async (materialId, options = {}) => {
     const switchId = ++pipelineSwitchId;
     const material = materialSamples[materialId] || materialSamples.standard;

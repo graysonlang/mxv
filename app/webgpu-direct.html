@@ -87,6 +87,25 @@
       width: 100%;
     }
 
+    input[type="number"] {
+      appearance: textfield;
+      background: #111715;
+      border: 1px solid #43504b;
+      border-radius: 6px;
+      box-sizing: border-box;
+      color: #f0eee7;
+      font: 13px/1.2 ui-sans-serif, system-ui, sans-serif;
+      min-height: 30px;
+      min-width: 0;
+      padding: 0 10px;
+      width: 100%;
+    }
+
+    input[type="number"]::-webkit-inner-spin-button,
+    input[type="number"]::-webkit-outer-spin-button {
+      opacity: 1;
+    }
+
     .action-button {
       appearance: none;
       background: #111715;
@@ -184,6 +203,21 @@
           <option value="bridge">Bridge</option>
           <option value="naga">Naga WGSL</option>
         </select>
+      </div>
+      <div class="control-row">
+        <label class="label" for="env-radiance-samples">Env Samples</label>
+        <select id="env-radiance-samples" name="env-radiance-samples">
+          <option value="0">0</option>
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="4">4</option>
+          <option value="8">8</option>
+          <option value="16">16</option>
+        </select>
+      </div>
+      <div class="control-row">
+        <label class="label" for="env-light-intensity">Env Intensity</label>
+        <input id="env-light-intensity" name="env-light-intensity" type="number" min="0" max="8" step="0.25" />
       </div>
       <div class="control-row">
         <span class="label">Benchmark</span>
