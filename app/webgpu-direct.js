@@ -13,6 +13,7 @@ export function getFilePaths() {
 
 const defaultGeometry = 'vendor/MaterialX/resources/Geometry/shaderball.glb';
 const defaultEnvironment = 'vendor/MaterialX/resources/Lights/san_giuseppe_bridge_split.hdr';
+const defaultLightRig = 'vendor/MaterialX/resources/Lights/san_giuseppe_bridge_split.mtlx';
 const runtimeBaseUrl = new URL('./vendor/materialx-runtime/', import.meta.url);
 const nagaShaderBaseUrl = new URL('./vendor/naga-materialx/', import.meta.url);
 const appStartTime = performance.now();
@@ -36,6 +37,7 @@ const defaultDrawEnvironment = parseBooleanQueryParam(
   queryParams.get('drawEnvironment') || queryParams.get('envBackground'),
   false,
 );
+const defaultDirectLightEnabled = parseBooleanQueryParam(queryParams.get('directLight'), true);
 let envRadianceSamples = Number.isFinite(defaultEnvRadianceSamples)
   ? Math.max(0, Math.min(16, Math.round(defaultEnvRadianceSamples)))
   : 4;
@@ -43,10 +45,17 @@ let envLightIntensity = Number.isFinite(defaultEnvLightIntensity)
   ? Math.max(0, Math.min(8, defaultEnvLightIntensity))
   : 1;
 let drawEnvironment = defaultDrawEnvironment;
+let directLightEnabled = defaultDirectLightEnabled;
 const privateVertexFloatCount = 48;
 const privatePixelByteLength = 96;
 const environmentBackgroundFloatCount = 16;
-const lightDataFloatCount = 4;
+const lightDataByteLength = 48;
+let activeDirectLight = {
+  color: [1, 0.894474, 0.567234],
+  direction: [0.514434, -0.479014, -0.711269],
+  intensity: 2.52776,
+  type: 1,
+};
 const materialXBoolUniformWarning = 'WGSL does not allow boolean types to be stored in uniform or storage address spaces.';
 const materialXKnownWarnings = new Set();
 const webGpuErrors = [];
@@ -461,8 +470,15 @@ struct PrivateUniformsPixel {
 
 ${publicUniformStructSource}
 
+struct LightData {
+  direction: vec3<f32>,
+  color: vec3<f32>,
+  light_type: i32,
+  intensity: f32,
+};
+
 struct LightDataPixel {
-  lightDirection: vec4<f32>,
+  u_lightData: array<LightData, 1>,
 };
 
 @group(0) @binding(0) var<uniform> u_vertex: PrivateUniformsVertex;
@@ -771,7 +787,8 @@ fn numActiveLightSources() -> i32 {
 
 fn sampleLightSource(position: vec3<f32>) -> LightShader {
   _ = position;
-  return LightShader(vec3<f32>(1.0), normalize(-u_lightData.lightDirection.xyz));
+  let light = u_lightData.u_lightData[0];
+  return LightShader(light.color * light.intensity, normalize(-light.direction));
 }
 
 fn mx_square(x: f32) -> f32 {
@@ -1132,6 +1149,81 @@ function parseMaterialValue(type, value) {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
+function getMaterialXVector(valueElement) {
+  const data = valueElement?.getValue?.()?.getData?.();
+  if (!data) return null;
+
+  if (typeof data.data === 'function') {
+    return Array.from(data.data()).slice(0, 3);
+  }
+
+  if (Array.isArray(data)) {
+    return data.slice(0, 3);
+  }
+
+  return null;
+}
+
+function getMaterialXFloat(valueElement, fallback = 0) {
+  const data = valueElement?.getValue?.()?.getData?.();
+  return Number.isFinite(Number(data)) ? Number(data) : fallback;
+}
+
+function findMaterialXLights(document) {
+  const lights = [];
+  for (const node of document.getNodes()) {
+    if (node.getType?.() === 'lightshader') {
+      lights.push(node);
+    }
+  }
+  return lights;
+}
+
+function registerMaterialXLights(mx, lights, context) {
+  mx.HwShaderGenerator.unbindLightShaders(context);
+
+  const lightTypeIds = new Map();
+  const lightData = [];
+  let nextLightTypeId = 1;
+
+  for (const light of lights) {
+    const nodeDef = light.getNodeDef?.();
+    const nodeDefName = nodeDef?.getName?.();
+    if (!nodeDef || !nodeDefName) continue;
+
+    if (!lightTypeIds.has(nodeDefName)) {
+      lightTypeIds.set(nodeDefName, nextLightTypeId);
+      mx.HwShaderGenerator.bindLightShader(nodeDef, nextLightTypeId, context);
+      nextLightTypeId++;
+    }
+
+    lightData.push({
+      color: getMaterialXVector(light.getValueElement('color')) || [1, 1, 1],
+      direction: getMaterialXVector(light.getValueElement('direction')) || [0, -1, 0],
+      intensity: getMaterialXFloat(light.getValueElement('intensity'), 1),
+      type: lightTypeIds.get(nodeDefName),
+    });
+  }
+
+  context.getOptions().hwMaxActiveLightSources = Math.max(
+    context.getOptions().hwMaxActiveLightSources,
+    lightData.length,
+  );
+
+  return lightData;
+}
+
+async function importMaterialXLightRig(mx, document, context, lightRigXml) {
+  if (!lightRigXml) return [];
+
+  const lightDocument = mx.createDocument();
+  await mx.readFromXmlString(lightDocument, lightRigXml);
+  document.importLibrary(lightDocument);
+
+  const lights = findMaterialXLights(document);
+  return registerMaterialXLights(mx, lights, context);
+}
+
 function getBlockPorts(block) {
   const size = typeof block?.size === 'function' ? block.size() : 0;
   const ports = [];
@@ -1365,9 +1457,12 @@ function validateGeneratedPixelSource(source, sampleId) {
   };
 }
 
-async function generateMaterialSample(mx, sampleId) {
+async function generateMaterialSample(mx, sampleId, lightRigXml) {
   if (!mx.WgslShaderGenerator) {
     throw new Error('MaterialX runtime does not expose WgslShaderGenerator.');
+  }
+  if (!mx.HwShaderGenerator) {
+    throw new Error('MaterialX runtime does not expose HwShaderGenerator light registration.');
   }
 
   const materialx = materialSampleSources[sampleId];
@@ -1380,6 +1475,7 @@ async function generateMaterialSample(mx, sampleId) {
   const libraries = mx.loadStandardLibraries(context);
   document.importLibrary(libraries);
   context.getOptions().shaderInterfaceType = mx.ShaderInterfaceType.SHADER_INTERFACE_COMPLETE;
+  const lightData = await importMaterialXLightRig(mx, document, context, lightRigXml);
 
   const element = mx.findRenderableElement(document);
   if (!element) {
@@ -1409,6 +1505,7 @@ async function generateMaterialSample(mx, sampleId) {
   const pixelContract = validateGeneratedPixelSource(pixelSource, sampleId);
   return {
     label: fallback.label,
+    lightData,
     ports,
     renderable: element.getNamePath(),
     source: 'shadergen',
@@ -1426,18 +1523,26 @@ async function initializeMaterialXShaderSupport(materialControl, pipelineControl
   try {
     setStatus('Loading MaterialX shadergen');
     const materialXStart = performance.now();
-    const mx = await loadMaterialX();
+    const [mx, lightRigXml] = await Promise.all([
+      loadMaterialX(),
+      fetchTextResource(defaultLightRig, 'Default light rig'),
+    ]);
     recordDuration('materialXLoad', materialXStart);
 
     setStatus('Generating MaterialX shader contract');
     const shaderStart = performance.now();
     const generatedEntries = [];
     for (const sampleId of Object.keys(materialSampleSources)) {
-      generatedEntries.push([sampleId, await generateMaterialSample(mx, sampleId)]);
+      generatedEntries.push([sampleId, await generateMaterialSample(mx, sampleId, lightRigXml)]);
     }
 
     materialSamples = Object.fromEntries(generatedEntries);
     const activeSample = materialSamples[activeMaterialId] || generatedEntries[0]?.[1];
+    if (activeSample?.lightData?.[0]) {
+      activeDirectLight = activeSample.lightData[0];
+      pipelineControl.updateLightData?.(activeDirectLight);
+      setMetric('directLight', describeDirectLight(activeDirectLight));
+    }
     recordDuration('shaderGeneration', shaderStart);
     setMetric('shaderTarget', activeSample?.target || '-');
     setMetric('shaderContract', activeSample ? `${activeSample.uniformCount} public ports / ${publicUniformByteLength} B` : '-');
@@ -2281,7 +2386,7 @@ function writeFrameUniforms(privateVertexData, privatePixelData, dimensions, env
   privatePixelData.ints[18] = envRadianceSamples;
   privatePixelData.ints[19] = 0;
   privatePixelData.floats.set(cameraPosition, 20);
-  privatePixelData.ints[23] = 1;
+  privatePixelData.ints[23] = directLightEnabled ? 1 : 0;
 }
 
 function writeEnvironmentBackgroundUniforms(backgroundData, dimensions) {
@@ -2313,6 +2418,29 @@ function createMaterialUniformData() {
     floats: new Float32Array(buffer),
     ints: new Int32Array(buffer),
   };
+}
+
+function createLightUniformData() {
+  const buffer = new ArrayBuffer(lightDataByteLength);
+  return {
+    bytes: new Uint8Array(buffer),
+    floats: new Float32Array(buffer),
+    ints: new Int32Array(buffer),
+  };
+}
+
+function writeLightUniforms(lightUniformData, light = activeDirectLight) {
+  lightUniformData.bytes.fill(0);
+  lightUniformData.floats.set(light.direction || [0, -1, 0], 0);
+  lightUniformData.floats.set(light.color || [1, 1, 1], 4);
+  lightUniformData.ints[7] = light.type || 0;
+  lightUniformData.floats[8] = Number.isFinite(light.intensity) ? light.intensity : 1;
+}
+
+function describeDirectLight(light = activeDirectLight) {
+  if (!directLightEnabled) return 'off';
+  const intensity = Number.isFinite(light.intensity) ? light.intensity.toFixed(2) : '1.00';
+  return `on / type ${light.type || 0} / ${intensity}x`;
 }
 
 function writeMaterialUniforms(publicUniformData, materialId) {
@@ -2410,6 +2538,20 @@ function bindEnvironmentControls() {
       updateQueryParam('drawEnvironment', drawEnvironment ? '1' : '0');
     });
   }
+}
+
+function bindDirectLightControls() {
+  const directLightInput = document.getElementById('direct-light');
+  setMetric('directLight', describeDirectLight());
+
+  if (!directLightInput) return;
+
+  directLightInput.checked = directLightEnabled;
+  directLightInput.addEventListener('change', () => {
+    directLightEnabled = directLightInput.checked;
+    setMetric('directLight', describeDirectLight());
+    updateQueryParam('directLight', directLightEnabled ? '1' : '0');
+  });
 }
 
 async function fetchTextResource(url, label) {
@@ -2702,13 +2844,13 @@ async function main() {
   const privatePixelData = createPrivatePixelUniformData();
   const environmentBackgroundData = new Float32Array(environmentBackgroundFloatCount);
   const publicUniformData = createMaterialUniformData();
-  const lightData = new Float32Array(lightDataFloatCount);
-  lightData.set([0.45, -0.8, -0.35, 0], 0);
+  const lightData = createLightUniformData();
+  writeLightUniforms(lightData);
   const privateVertexBuffer = createUniformBuffer(device, 'MaterialX PrivateUniforms vertex', privateVertexData);
   const privatePixelBuffer = createUniformBuffer(device, 'MaterialX PrivateUniforms pixel', privatePixelData.bytes);
   const environmentBackgroundBuffer = createUniformBuffer(device, 'MaterialX environment background uniforms', environmentBackgroundData);
   const publicUniformBuffer = createUniformBuffer(device, 'MaterialX PublicUniforms pixel port table', publicUniformData.bytes);
-  const lightDataBuffer = createUniformBuffer(device, 'MaterialX LightData pixel placeholder', lightData);
+  const lightDataBuffer = createUniformBuffer(device, 'MaterialX LightData pixel', lightData.bytes);
   const envSampler = device.createSampler({
     addressModeU: 'repeat',
     addressModeV: 'clamp-to-edge',
@@ -2716,7 +2858,7 @@ async function main() {
     minFilter: 'linear',
     mipmapFilter: 'linear',
   });
-  device.queue.writeBuffer(lightDataBuffer, 0, lightData);
+  device.queue.writeBuffer(lightDataBuffer, 0, lightData.bytes);
   setMetric('contract', `bindings 0-7 / private ${privatePixelByteLength} B`);
   const bindGroupResources = {
     ...environmentTextures,
@@ -2731,6 +2873,7 @@ async function main() {
   const environmentBackgroundBindGroup = createEnvironmentBackgroundBindGroup(device, environmentBackgroundPipeline, bindGroupResources);
   let pipelineSwitchId = 0;
   bindEnvironmentControls();
+  bindDirectLightControls();
   const applyPipelineForShaderMode = async (materialId, options = {}) => {
     const switchId = ++pipelineSwitchId;
     const material = materialSamples[materialId] || materialSamples.standard;
@@ -2779,6 +2922,10 @@ async function main() {
       setMetric('vertexAdapter', `${adapted.lineCount} GLSL -> WGSL / ${formatDuration(adapterDuration)}`);
     },
     validateGeneratedFragmentTranslation: generatedFragmentWgsl => validateGeneratedFragmentTranslation(device, generatedFragmentWgsl),
+    updateLightData: (light) => {
+      writeLightUniforms(lightData, light);
+      device.queue.writeBuffer(lightDataBuffer, 0, lightData.bytes);
+    },
   };
 
   initializeMaterialXShaderSupport(materialControl, pipelineControl).catch((error) => {

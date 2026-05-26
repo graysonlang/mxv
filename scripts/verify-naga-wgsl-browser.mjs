@@ -377,7 +377,7 @@ async function browserCompileShaders(shaders, options) {
         { binding: 4, texture: { sampleType: 'float', viewDimension: '2d' }, visibility: fragment },
         { binding: 5, sampler: { type: 'filtering' }, visibility: fragment },
         { binding: 6, buffer: { minBindingSize: 288, type: 'uniform' }, visibility: fragment },
-        { binding: 7, buffer: { minBindingSize: 16, type: 'uniform' }, visibility: fragment },
+        { binding: 7, buffer: { minBindingSize: 48, type: 'uniform' }, visibility: fragment },
       ],
       label: 'MaterialX direct WebGPU bind group layout',
     });
@@ -387,7 +387,7 @@ async function browserCompileShaders(shaders, options) {
     const privateVertexBuffer = createUniformBuffer(device, 'MaterialX verifier private vertex buffer', 192);
     const privatePixelBuffer = createUniformBuffer(device, 'MaterialX verifier private pixel buffer', 96);
     const publicUniformBuffer = createUniformBuffer(device, 'MaterialX verifier public pixel buffer', 288);
-    const lightDataBuffer = createUniformBuffer(device, 'MaterialX verifier light data buffer', 16);
+    const lightDataBuffer = createUniformBuffer(device, 'MaterialX verifier light data buffer', 48);
     const radianceTexture = createVerifierTexture(device, 'MaterialX verifier radiance texture');
     const irradianceTexture = createVerifierTexture(device, 'MaterialX verifier irradiance texture');
     const sampler = device.createSampler({

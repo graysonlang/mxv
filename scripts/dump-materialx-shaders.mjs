@@ -30,6 +30,9 @@ const outputRoot = path.resolve(root, args.get('out') || 'vendor/.cache/material
 const interfaceMode = args.get('interface') || 'complete';
 const materialPath = args.get('material');
 const searchPath = args.get('search-path') || 'vendor/MaterialX/resources';
+const lightRigPath = args.get('light-rig') === 'none'
+  ? null
+  : args.get('light-rig') || 'vendor/MaterialX/resources/Lights/san_giuseppe_bridge_split.mtlx';
 
 if (!existsSync(runtimeLoader)) {
   console.error(`Missing ${path.relative(root, runtimeLoader)}. Rebuild or reinstall @graysonlang/mx.`);
@@ -168,6 +171,71 @@ async function loadSampleDocument(mx, sample) {
   return document;
 }
 
+function findMaterialXLights(document) {
+  const lights = [];
+  for (const node of document.getNodes()) {
+    if (node.getType?.() === 'lightshader') {
+      lights.push(node);
+    }
+  }
+  return lights;
+}
+
+function getMaterialXVector(valueElement) {
+  const data = valueElement?.getValue?.()?.getData?.();
+  if (!data) return null;
+  if (typeof data.data === 'function') return Array.from(data.data()).slice(0, 3);
+  if (Array.isArray(data)) return data.slice(0, 3);
+  return null;
+}
+
+function getMaterialXFloat(valueElement, fallback = 0) {
+  const data = valueElement?.getValue?.()?.getData?.();
+  return Number.isFinite(Number(data)) ? Number(data) : fallback;
+}
+
+async function applyLightRig(mx, document, context) {
+  if (!lightRigPath) return [];
+  if (!mx.HwShaderGenerator) {
+    throw new Error('MaterialX runtime does not expose HwShaderGenerator light registration.');
+  }
+
+  const lightDocument = mx.createDocument();
+  await mx.readFromXmlFile(lightDocument, lightRigPath, searchPath);
+  document.importLibrary(lightDocument);
+
+  mx.HwShaderGenerator.unbindLightShaders(context);
+  const lightTypeIds = new Map();
+  const lightData = [];
+  let nextLightTypeId = 1;
+
+  for (const light of findMaterialXLights(document)) {
+    const nodeDef = light.getNodeDef?.();
+    const nodeDefName = nodeDef?.getName?.();
+    if (!nodeDef || !nodeDefName) continue;
+
+    if (!lightTypeIds.has(nodeDefName)) {
+      lightTypeIds.set(nodeDefName, nextLightTypeId);
+      mx.HwShaderGenerator.bindLightShader(nodeDef, nextLightTypeId, context);
+      nextLightTypeId++;
+    }
+
+    lightData.push({
+      color: getMaterialXVector(light.getValueElement('color')) || [1, 1, 1],
+      direction: getMaterialXVector(light.getValueElement('direction')) || [0, -1, 0],
+      intensity: getMaterialXFloat(light.getValueElement('intensity'), 1),
+      type: lightTypeIds.get(nodeDefName),
+    });
+  }
+
+  context.getOptions().hwMaxActiveLightSources = Math.max(
+    context.getOptions().hwMaxActiveLightSources,
+    lightData.length,
+  );
+
+  return lightData;
+}
+
 async function generateShader(mx, sample, generatorId, mode) {
   const generatorClassName = generatorMap[generatorId];
   if (!generatorClassName) {
@@ -188,6 +256,7 @@ async function generateShader(mx, sample, generatorId, mode) {
   const libraries = mx.loadStandardLibraries(context);
   document.importLibrary(libraries);
   setInterfaceMode(mx, context.getOptions(), mode);
+  const lightData = await applyLightRig(mx, document, context);
 
   const element = mx.findRenderableElement(document);
   if (!element) {
@@ -212,6 +281,8 @@ async function generateShader(mx, sample, generatorId, mode) {
     generatorClassName,
     generatorId,
     interfaceMode: mode,
+    lightData,
+    lightRig: lightRigPath,
     renderable: element.getNamePath(),
     stages,
     target: typeof generator.getTarget === 'function' ? generator.getTarget() : null,
@@ -310,6 +381,8 @@ async function writeShaderDump(mx) {
           generatorClassName: report.generatorClassName,
           generatorId,
           interfaceMode: mode,
+          lightData: report.lightData,
+          lightRig: report.lightRig ? path.relative(root, path.resolve(root, report.lightRig)) : null,
           renderable: report.renderable,
           stages: {},
           target: report.target,

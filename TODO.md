@@ -8,7 +8,7 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 
 - [ ] Continue the direct WebGPU MaterialX shader spike.
   - Status: in progress.
-  - Current shape: `/webgpu-direct.html` renders the MaterialX shaderball with a direct WebGPU pipeline, generated sample material values, generated vertex-stage contract validation, MaterialX-shaped public/private uniform bindings, HDR environment textures, and an optional Naga-translated generated WGSL pixel path.
+  - Current shape: `/webgpu-direct.html` renders the MaterialX shaderball with a direct WebGPU pipeline, generated sample material values, generated vertex-stage contract validation, MaterialX-shaped public/private/light uniform bindings, HDR environment textures, and an optional Naga-translated generated WGSL pixel path.
   - Main gap: the Naga path still needs visual and performance evaluation against the WebGL viewer before it can replace the hand-authored bridge as the primary spike path.
 
 ## Done
@@ -27,7 +27,7 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 - [x] Add a generated vertex-stage adapter for the narrow MaterialX vertex contract.
 - [x] Pack `PublicUniforms_pixel` in generated order with std140-style alignment.
 - [x] Align `PrivateUniforms_pixel` with the generated MaterialX private uniform block.
-- [x] Keep lab-only direct light direction in the binding 7 light-data placeholder instead of adding it to private uniforms.
+- [x] Keep light data in binding 7 instead of adding it to private uniforms.
 - [x] Add `npm run verify:webgpu` for Chrome-based direct WebGPU validation on port `8080`.
 - [x] Add a generated fragment-source contract probe for the standard-surface function signature and generated `main()` call argument order.
 - [x] Reshape the browser WGSL fragment bridge around a generated-style `NG_standard_surface_surfaceshader_100` call.
@@ -51,11 +51,13 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 - [x] Capture the MaterialX desktop viewer environment-lighting defaults for the Phase 3 comparison: FIS by default, `envSampleCount` 16, and `envLightIntensity` 1.
 - [x] Match the direct WebGPU environment sampler to the desktop viewer's lat-long policy: repeat in U, clamp in V, and linear mip filtering.
 - [x] Add a direct WebGPU environment-background toggle with `drawEnvironment=1`, matching the desktop viewer default of off.
+- [x] Register the default MaterialX direct-light rig during shader generation so Naga fixtures use a real directional-light `sampleLightSource` path instead of the zero-light stub.
+- [x] Add a direct-light toggle with `directLight=1|0` for desktop-style direct+IBL versus IBL-only comparison.
 
 ## In Progress
 
 - [ ] Phase 3 direct WebGPU bridge.
-  - Status: binding contract is active; generated fragment source is validated for the expected standard-surface shape; the browser WGSL fragment path now mirrors the generated outer `main()` to standard-surface call flow; a narrow custom translator compiles a first helper-function slice; Naga translates the full emitted shader fixtures offline; Chrome accepts the generated Naga vertex and pixel modules after the bool-uniform and subsurface-radius pre-passes; all seven translated samples compile as render pipelines with the direct WebGPU bind group layout; the direct viewer can now draw the shaderball through the Naga-generated WGSL path with display encoding, runtime environment sample controls, and mipmapped HDR radiance lookups.
+  - Status: binding contract is active; generated fragment source is validated for the expected standard-surface shape; the browser WGSL fragment path now mirrors the generated outer `main()` to standard-surface call flow; a narrow custom translator compiles a first helper-function slice; Naga translates the full emitted shader fixtures offline; Chrome accepts the generated Naga vertex and pixel modules after the bool-uniform and subsurface-radius pre-passes; all seven translated samples compile as render pipelines with the direct WebGPU bind group layout; the direct viewer can now draw the shaderball through the Naga-generated WGSL path with display encoding, runtime environment sample controls, mipmapped HDR radiance lookups, and generated-style directional light data.
   - Next decision: compare visual parity and performance between `shader=bridge`, `shader=naga&envSamples=4`, and `shader=naga&envSamples=16`, then decide whether Naga becomes the primary WebGPU shader path for this spike.
 
 - [ ] Performance comparison against the WebGL viewer.
@@ -70,6 +72,8 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 2. Evaluate the Naga path before growing the custom translator.
    - Compare visual parity against the current hand-authored bridge before replacing any live path.
    - Use car paint, brushed metal, pearl, and coated fabric as the main visual checks; keep emissive plastic as emission coverage, not a parity reference.
+   - Compare Naga against the desktop viewer with the same material, shaderball mesh, `san_giuseppe_bridge_split` environment/light rig, `envSamples=16`, `envIntensity=1`, `directLight=1`, matched environment-background visibility, and shadows disabled.
+   - Re-run the same views with `directLight=0` to isolate image-based lighting from direct-light contribution.
    - Run the material-switch benchmark in Naga mode and compare pipeline rebuild cost against bridge-mode uniform-only switching.
    - Measure steady FPS for complex materials at `envSamples=4`, `8`, and `16`.
    - If it holds, consider a build-time wrapper first and a WASM wrapper later.
