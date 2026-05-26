@@ -34,7 +34,8 @@
     "verify:webgpu": "node ./scripts/verify-webgpu-direct.mjs",
     "bootstrap": "npm install && npm run setup:assets",
     "setup:assets": "node ./scripts/setup-materialx.mjs",
-    "setup:materialx": "node ./scripts/setup-materialx.mjs"
+    "setup:materialx": "node ./scripts/setup-materialx.mjs",
+    "spike:naga": "node ./scripts/spike-naga-materialx.mjs"
   },
   "config": {
     "esp_dev_cert_name": "graysonlang-mxv-dev"

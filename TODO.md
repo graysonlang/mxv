@@ -40,12 +40,13 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 - [x] Route direct lab lighting through generated-style `numActiveLightSources` and `sampleLightSource` helpers.
 - [x] Bind real MaterialX HDR radiance and irradiance environment maps in the direct WebGPU path, with 1x1 fallback textures.
 - [x] Add an initial generated GLSL-to-WGSL translator scaffold for a compile-checked helper-function slice.
+- [x] Add a repeatable Naga CLI spike; after a tiny bool-uniform pre-pass, Naga converts all six generated vertex and pixel shaders to WGSL.
 
 ## In Progress
 
 - [ ] Phase 3 direct WebGPU bridge.
-  - Status: binding contract is active; generated fragment source is validated for the expected standard-surface shape; the browser WGSL fragment path now mirrors the generated outer `main()` to standard-surface call flow; a narrow generated GLSL-to-WGSL translator now compiles a first helper-function slice in the browser.
-  - Next decision: expand the translator through `out`/`inout` helper functions and the smallest useful closure slice, while keeping the bridge as a fallback benchmark harness.
+  - Status: binding contract is active; generated fragment source is validated for the expected standard-surface shape; the browser WGSL fragment path now mirrors the generated outer `main()` to standard-surface call flow; a narrow custom translator compiles a first helper-function slice, and Naga can translate the full emitted shader fixtures offline after the bool-uniform pre-pass.
+  - Next decision: browser compile-check Naga's full WGSL output and decide whether to wrap Naga as a build-time tool or future WASM library before expanding the custom translator.
 
 - [ ] Performance comparison against the WebGL viewer.
   - Status: direct page exposes first-frame, frame-time, FPS, material upload, switch-frame, switch-GPU, average, and p95 metrics.
@@ -56,14 +57,14 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 1. Capture a small baseline matrix for the representative generated samples in the WebGL viewer and `/webgpu-direct.html`.
    - Include first visible frame, steady FPS, frame-time average/p95, material switch CPU time, and material switch GPU completion time.
 
-2. Expand the tiny translator for the generated Vulkan-style GLSL subset.
-   - Add `out`/`inout` return-value lowering for simple helper functions.
-   - Add overload name mangling where WGSL cannot represent MaterialX GLSL overloads directly.
-   - Keep unsupported constructs explicit so this does not become an accidental general shader compiler.
+2. Evaluate the Naga path before growing the custom translator.
+   - Browser compile-check the full Naga WGSL output for vertex and pixel stages.
+   - Compare the Naga output resource bindings and entry points against the direct WebGPU harness.
+   - If it holds, consider a build-time wrapper first and a WASM wrapper later.
 
 3. Bring over one small generated fragment slice if the measured performance looks promising.
    - Start from the validated generated `NG_standard_surface_surfaceshader_100` signature and `main()` call order.
-   - Stop if the adapter starts looking like a broad shader compiler.
+   - Prefer Naga output if it is browser-accepted; keep the custom translator as a fallback or targeted pre/post pass.
 
 4. Add a textured MaterialX sample.
    - Goal: prove non-environment texture and sampler bindings before investing further in shader translation.

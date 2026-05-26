@@ -320,6 +320,8 @@ This is not yet a direct translation of the generated `wgsl-complete.pixel.glsl`
 
 The spike now includes the first deliberately tiny generated GLSL-to-WGSL translator layer. It extracts selected leaf/helper functions from the Vulkan-style MaterialX pixel source, lowers their signatures and simple bodies into browser WGSL, and compile-checks that translated helper module in the WebGPU device. This translated helper slice does not replace the active shading path yet; it is the foothold for expanding toward `out`/`inout` helpers, overload handling, and eventually a closure-function slice while keeping unsupported GLSL constructs explicit.
 
+Naga is now the preferred next translation probe. `npm run spike:naga` regenerates the cached MaterialX shader fixtures, applies a small bool-uniform pre-pass for MaterialX aliases such as `#define thin_walled bool(thin_walled)`, and invokes `naga-cli` on every generated vertex and pixel shader. With `naga-cli v29.0.3`, all six current samples convert successfully to WGSL: each vertex stage is about 207 lines and each full pixel stage is about 5011 lines. The next validation step is to compile-check those full Naga WGSL outputs in the browser and compare their bindings/entry points with the direct WebGPU harness.
+
 The direct page includes a material selector for the generated coverage sample values, and accepts the same state through the URL:
 
 ```text
