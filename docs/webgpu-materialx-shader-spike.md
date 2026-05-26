@@ -298,6 +298,8 @@ The browser WGSL fragment path now mirrors that generated outer shape. It builds
 
 The first generated helper slice has been ported into the WGSL bridge with MaterialX-compatible names: `mx_square`, `mx_pow5`, `mx_ior_to_f0`, and `mx_fresnel_schlick`. The fragment adapter validates that those helper names still exist in the live generated pixel source and reports helper coverage in the HUD. The remaining approximation-specific helpers are still named with an `mx_bridge_` prefix so it is clear which pieces are not direct generated-function ports yet.
 
+The second helper slice ports the generated GGX helper names `mx_average_alpha`, `mx_ggx_NDF`, `mx_ggx_smith_G1`, and `mx_ggx_smith_G2`. The bridge now uses this GGX slice for its direct specular lobes, so the fragment approximation has begun moving real shading behavior under generated-compatible helper boundaries while still avoiding a broad GLSL-to-WGSL translator.
+
 MaterialX emits a known warning for the `standard_surface.thin_walled` boolean port because WGSL does not allow booleans in uniform/storage address spaces. The direct page filters that specific Emscripten `printErr` message and surfaces it as `Shader Notes: bool uniform mapped`; unknown MaterialX stderr output is still forwarded to the console.
 
 This is not yet a direct translation of the generated `wgsl-complete.pixel.glsl` output. Instead, it is a browser-WGSL bridge that keeps the generated binding numbers, vertex-stage semantics, and public-uniform semantic order while using a compact hand-authored standard-surface approximation for the fragment stage. That gives the spike a real WebGPU resource contract to measure before investing in a broader shader translator.

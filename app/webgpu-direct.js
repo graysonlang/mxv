@@ -199,6 +199,10 @@ const portedGeneratedPixelHelpers = [
   'mx_pow5',
   'mx_ior_to_f0',
   'mx_fresnel_schlick',
+  'mx_average_alpha',
+  'mx_ggx_NDF',
+  'mx_ggx_smith_G1',
+  'mx_ggx_smith_G2',
 ];
 const privatePixelUniformPorts = [
   { type: 'matrix44', variable: 'u_envMatrix' },
@@ -594,9 +598,44 @@ fn mx_fresnel_schlick(cosTheta: f32, f0: vec3<f32>) -> vec3<f32> {
   return f0 + (vec3<f32>(1.0) - f0) * mx_pow5(x);
 }
 
-fn mx_bridge_specular_lobe(nDotH: f32, roughness: f32) -> f32 {
-  let power = mix(192.0, 8.0, saturate(roughness));
-  return pow(saturate(nDotH), power) * mix(1.0, 0.22, saturate(roughness));
+fn mx_average_alpha(alpha: vec2<f32>) -> f32 {
+  return (alpha.x + alpha.y) * 0.5;
+}
+
+fn mx_ggx_NDF(H: vec3<f32>, alpha: vec2<f32>) -> f32 {
+  let safeAlpha = max(alpha, vec2<f32>(0.001));
+  let He = H.xy / safeAlpha;
+  let denom = dot(He, He) + mx_square(H.z);
+  return 1.0 / (3.1415926535897932 * safeAlpha.x * safeAlpha.y * mx_square(denom));
+}
+
+fn mx_ggx_smith_G1(cosTheta: f32, alpha: f32) -> f32 {
+  let safeCosTheta = max(cosTheta, 0.001);
+  let cosTheta2 = mx_square(safeCosTheta);
+  let tanTheta2 = (1.0 - cosTheta2) / cosTheta2;
+  return 2.0 / (1.0 + sqrt(1.0 + mx_square(alpha) * tanTheta2));
+}
+
+fn mx_ggx_smith_G2(NdotL: f32, NdotV: f32, alpha: f32) -> f32 {
+  let alpha2 = mx_square(alpha);
+  let lambdaL = sqrt(alpha2 + (1.0 - alpha2) * mx_square(NdotL));
+  let lambdaV = sqrt(alpha2 + (1.0 - alpha2) * mx_square(NdotV));
+  return 2.0 * NdotL * NdotV / max(lambdaL * NdotV + lambdaV * NdotL, 0.001);
+}
+
+fn mx_bridge_specular_lobe(N: vec3<f32>, L: vec3<f32>, V: vec3<f32>, X: vec3<f32>, roughness: f32) -> f32 {
+  let safeRoughness = clamp(roughness, 0.045, 1.0);
+  let alpha = vec2<f32>(safeRoughness);
+  let Nn = normalize(N);
+  let Xn = normalize(X - dot(X, Nn) * Nn);
+  let Yn = normalize(cross(Nn, Xn));
+  let H = normalize(L + V);
+  let Ht = vec3<f32>(dot(H, Xn), dot(H, Yn), max(dot(H, Nn), 0.0));
+  let NdotL = saturate(dot(Nn, L));
+  let NdotV = max(saturate(dot(Nn, V)), 0.001);
+  let D = mx_ggx_NDF(Ht, alpha);
+  let G = mx_ggx_smith_G2(NdotL, NdotV, mx_average_alpha(alpha));
+  return clamp(D * G * NdotL / (4.0 * NdotV) * 0.35, 0.0, 1.5);
 }
 
 fn mx_bridge_thin_film_tint(thickness: f32, coatWeight: f32) -> vec3<f32> {
@@ -641,7 +680,6 @@ ${parameters}
   let envIntensity = u_privatePixel.u_envLightIntensity;
   let activeLightCount = f32(u_privatePixel.u_numActiveLightSources);
   let nDotL = saturate(dot(shadingNormal, lightDirection));
-  let nDotH = saturate(dot(shadingNormal, halfVector));
   let nDotV = saturate(dot(shadingNormal, viewDirection));
   let vDotH = saturate(dot(viewDirection, halfVector));
   let tDotH = abs(dot(shadingTangent, halfVector));
@@ -657,11 +695,11 @@ ${parameters}
   let dielectricF0 = vec3<f32>(mx_ior_to_f0(specularIor)) * specularColor * specularWeight;
   let f0 = dielectricF0 * (1.0 - metalnessWeight) + baseColor * metalnessWeight;
   let specularFresnel = mx_fresnel_schlick(vDotH, f0);
-  let specularTerm = mx_bridge_specular_lobe(nDotH, mix(specularRoughness, 1.0, coatWeight * coatAffectRoughness));
+  let specularTerm = mx_bridge_specular_lobe(shadingNormal, lightDirection, viewDirection, shadingTangent, mix(specularRoughness, 1.0, coatWeight * coatAffectRoughness));
   let envSpecular = radiance * mx_fresnel_schlick(nDotV, f0) * mix(0.35, 0.08, specularRoughness);
   let coatF0 = vec3<f32>(mx_ior_to_f0(coatIor)) * coatColor;
   let film = mx_bridge_thin_film_tint(thinFilmThickness, coatWeight);
-  let coatTerm = coatWeight * mx_bridge_specular_lobe(nDotH, coatRoughness) * mx_fresnel_schlick(vDotH, coatF0) * film;
+  let coatTerm = coatWeight * mx_bridge_specular_lobe(shadingNormal, lightDirection, viewDirection, shadingTangent, coatRoughness) * mx_fresnel_schlick(vDotH, coatF0) * film;
   let sheenTerm = sheenWeight * sheenColor * pow(1.0 - nDotV, mix(6.0, 1.4, sheenRoughness)) * 0.32;
   let subsurfaceTerm = subsurfaceWeight * subsurfaceColor * (0.1 + 0.42 * pow(1.0 - nDotV, 2.0));
   let tangentGlint = vec3<f32>(pow(tDotH, 36.0)) * coatWeight * film * 0.06;
