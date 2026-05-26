@@ -161,6 +161,13 @@ http://127.0.0.1:8000/webgpu.html
 http://127.0.0.1:8000/webgpu-direct.html
 ```
 
+The direct WebGPU page loads the MaterialX shaderball and the `San Giuseppe Bridge Split` HDR environment by default. It also accepts `material` and `environment` query params for focused shader-bridge checks:
+
+```text
+http://127.0.0.1:8000/webgpu-direct.html?material=pearl
+http://127.0.0.1:8000/webgpu-direct.html?material=brushedMetal&environment=vendor/MaterialX/resources/Lights/table_mountain_split.hdr
+```
+
 ## WebGL Viewer Options
 
 The WebGL viewer persists common settings in the URL. Friendly names are used for material and model selection:

@@ -281,14 +281,16 @@ The direct WebGPU proof now has a MaterialX-shaped binding harness:
 
 - `binding=0`: vertex private uniform data for world, view-projection, and inverse-transpose matrices.
 - `binding=1`: pixel private uniform data for environment matrix, environment settings, view position, and active-light count.
-- `binding=2` and `binding=3`: placeholder environment radiance texture and sampler.
-- `binding=4` and `binding=5`: placeholder environment irradiance texture and sampler.
+- `binding=2` and `binding=3`: HDR environment radiance texture and sampler, with a 1x1 fallback texture if loading fails.
+- `binding=4` and `binding=5`: HDR environment irradiance texture and sampler, with a 1x1 fallback texture if loading fails.
 - `binding=6`: public standard-surface material values in the same 39-port order reported by the MaterialX generator.
 - `binding=7`: placeholder light data block, currently used by the bridge for the lab's direct light direction.
 
 The proof draw now uses the vendored MaterialX `shaderball.glb` by default. The loader applies mesh transforms, normalizes the model into the direct renderer's view volume, and packs position, normal, and tangent data into the same WebGPU vertex layout used by the generated sphere fallback. A custom geometry URL can be supplied with `geom=...` for local experiments.
 
 The direct pipeline includes a `depth24plus` depth attachment and uses single-sided rasterization with `frontFace: "ccw"` and `cullMode: "back"`. The shaderball GLB and generated sphere fallback now both use winding that matches their outward normals, which gives this spike an efficient WebGPU-style draw path while still catching future asset or transform mistakes.
+
+The direct page now loads the filtered MaterialX `san_giuseppe_bridge_split.hdr` environment by default, plus the matching irradiance HDR from `resources/Lights/irradiance`. These are uploaded as `rgba16float` WebGPU textures and sampled through simple latitude-longitude helper functions in the bridge. The sampling is still an approximation rather than MaterialX's full environment implementation, but bindings 2-5 now carry real HDR data instead of constant placeholder colors.
 
 The direct page now loads the MaterialX runtime and runs `WgslShaderGenerator` for each sample. Since this runtime still emits Vulkan-style GLSL rather than browser WGSL, the page does not feed the generated pixel source directly into WebGPU yet. It does use the generated shader object to extract `PublicUniforms_pixel` and upload the generated standard-surface values into the WebGPU uniform buffer. The initial hand-authored JS values remain as a fallback while shadergen is loading or if shadergen fails.
 
@@ -325,6 +327,7 @@ http://127.0.0.1:8000/webgpu-direct.html?material=brushedMetal
 http://127.0.0.1:8000/webgpu-direct.html?material=smokedGlass
 http://127.0.0.1:8000/webgpu-direct.html?material=emissivePlastic
 http://127.0.0.1:8000/webgpu-direct.html?material=coatedFabric
+http://127.0.0.1:8000/webgpu-direct.html?material=pearl&environment=vendor/MaterialX/resources/Lights/table_mountain_split.hdr
 ```
 
 Next, compare the direct bridge against the WebGL viewer for setup cost, steady FPS, and material-switch latency. If those numbers look promising, the next technical step is to decide whether to port selected generated closure functions into WGSL by hand or build a tiny translator for the narrow subset used by `standard_surface`.

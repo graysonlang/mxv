@@ -74,6 +74,7 @@ Useful overrides:
 npm run verify:webgpu -- --headed
 npm run verify:webgpu -- '--url=http://127.0.0.1:8000/webgpu-direct.html?material=pearl'
 npm run verify:webgpu -- '--url=http://127.0.0.1:8000/webgpu-direct.html?material=brushedMetal' '--expected-material=Brushed Metal (shadergen)'
+npm run verify:webgpu -- '--url=http://127.0.0.1:8000/webgpu-direct.html?material=pearl&environment=vendor/MaterialX/resources/Lights/table_mountain_split.hdr' '--expected-environment=Table Mountain Split'
 MXV_CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" npm run verify:webgpu
 ```
 

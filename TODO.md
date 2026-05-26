@@ -38,6 +38,7 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 - [x] Port generated pre-BSDF helpers for luminance and roughness/anisotropy packing.
 - [x] Port `mx_rotate_vector3` and use it for specular and coat tangent rotation.
 - [x] Route direct lab lighting through generated-style `numActiveLightSources` and `sampleLightSource` helpers.
+- [x] Bind real MaterialX HDR radiance and irradiance environment maps in the direct WebGPU path, with 1x1 fallback textures.
 
 ## In Progress
 
@@ -67,7 +68,7 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
    - Goal: prove non-environment texture and sampler bindings before investing further in shader translation.
 
 5. Improve environment parity when visual comparison becomes important.
-   - Replace placeholder irradiance/radiance textures with viewer-equivalent environment resources.
+   - Continue from the loaded HDR radiance/irradiance textures toward viewer-equivalent environment sampling and intensity.
    - Keep this behind the performance/fidelity evaluation so it does not block shader-contract learning.
 
 6. Expand verification once the fragment path grows.

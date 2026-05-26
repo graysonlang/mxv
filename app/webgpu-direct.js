@@ -3,6 +3,7 @@
 import index from './webgpu-direct.html';
 import { Box3, Vector3 } from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { materialSamples as materialSampleSources } from '../src/materialx-samples.js';
 
 export function getFilePaths() {
@@ -10,6 +11,7 @@ export function getFilePaths() {
 }
 
 const defaultGeometry = 'vendor/MaterialX/resources/Geometry/shaderball.glb';
+const defaultEnvironment = 'vendor/MaterialX/resources/Lights/san_giuseppe_bridge_split.hdr';
 const runtimeBaseUrl = new URL('./vendor/materialx-runtime/', import.meta.url);
 const appStartTime = performance.now();
 const cameraFov = 60 * Math.PI / 180;
@@ -29,6 +31,7 @@ const webGpuErrors = [];
 if (typeof window !== 'undefined') {
   window.__mxvWebGpuErrors = webGpuErrors;
 }
+const requestedEnvironment = queryParams.get('environment') || queryParams.get('env') || defaultEnvironment;
 
 const materialPortIndex = {
   base: 0,
@@ -736,6 +739,24 @@ fn mx_rotate_vector3(inputValue: vec3<f32>, amount: f32, axisValue: vec3<f32>) -
   return inputValue * c + cross(inputValue, axis) * s + axis * dot(axis, inputValue) * oc;
 }
 
+fn mx_latlong_uv(direction: vec3<f32>) -> vec2<f32> {
+  let transformedDirection = normalize((u_privatePixel.u_envMatrix * vec4<f32>(normalize(direction), 0.0)).xyz);
+  let u = fract(atan2(transformedDirection.x, -transformedDirection.z) * 0.15915494309189535 + 0.5);
+  let v = acos(clamp(transformedDirection.y, -1.0, 1.0)) * 0.3183098861837907;
+  return vec2<f32>(u, v);
+}
+
+fn mx_sample_environment_radiance(direction: vec3<f32>, roughness: f32) -> vec3<f32> {
+  let uv = mx_latlong_uv(direction);
+  let sampleColor = textureSample(u_envRadianceTexture, u_envRadianceSampler, uv).rgb;
+  return sampleColor * u_privatePixel.u_envLightIntensity * mix(1.0, 0.62, saturate(roughness));
+}
+
+fn mx_sample_environment_irradiance(direction: vec3<f32>) -> vec3<f32> {
+  let uv = mx_latlong_uv(direction);
+  return textureSample(u_envIrradianceTexture, u_envIrradianceSampler, uv).rgb * u_privatePixel.u_envLightIntensity;
+}
+
 fn mx_bridge_specular_lobe(N: vec3<f32>, L: vec3<f32>, V: vec3<f32>, X: vec3<f32>, alphaInput: vec2<f32>) -> f32 {
   let alpha = clamp(alphaInput, vec2<f32>(0.045), vec2<f32>(1.0));
   let Nn = normalize(N);
@@ -802,15 +823,14 @@ ${parameters}
   let emissionWeight = max(emission, 0.0);
   let emissionColor = max(emission_color, vec3<f32>(0.0));
   let surfaceOpacity = saturate(mx_luminance_color3(opacity, vec3<f32>(0.272229, 0.674082, 0.053689)).x);
-  let envIntensity = u_privatePixel.u_envLightIntensity;
   let activeLightCount = f32(numActiveLightSources());
   let nDotL = saturate(dot(shadingNormal, lightDirection));
   let nDotV = saturate(dot(shadingNormal, viewDirection));
   let vDotH = saturate(dot(viewDirection, halfVector));
   let lDotV = saturate(dot(lightDirection, viewDirection));
   let tDotH = abs(dot(mainTangent, halfVector));
-  let irradiance = textureSample(u_envIrradianceTexture, u_envIrradianceSampler, vec2<f32>(0.5, 0.5)).rgb * envIntensity;
-  let radiance = textureSample(u_envRadianceTexture, u_envRadianceSampler, vec2<f32>(0.5, 0.5)).rgb * envIntensity;
+  let irradiance = mx_sample_environment_irradiance(shadingNormal);
+  let radiance = mx_sample_environment_radiance(reflect(-viewDirection, shadingNormal), specularRoughness);
   let directMask = max(activeLightCount, 1.0);
   let transmissionMix = transmissionWeight * 0.35;
   let diffuseColor = baseColor * (1.0 - transmissionMix) + transmissionColor * transmissionMix;
@@ -1611,13 +1631,17 @@ async function loadGeometry() {
   }
 }
 
-function prettyGeometryName(path) {
+function prettyAssetName(path) {
   return decodeURIComponent(path)
     .split('/')
     .pop()
     .replace(/\.[^.]+$/, '')
     .replace(/[_-]+/g, ' ')
     .replace(/\b\w/g, character => character.toUpperCase());
+}
+
+function prettyGeometryName(path) {
+  return prettyAssetName(path);
 }
 
 function createBuffer(device, label, data, usage) {
@@ -1657,6 +1681,81 @@ function createPlaceholderTexture(device, label, color) {
     { height: 1, width: 1 },
   );
   return texture;
+}
+
+function getEnvironmentIrradiancePath(environmentPath) {
+  return environmentPath.replace('/Lights/', '/Lights/irradiance/');
+}
+
+async function loadHdrTexture(url) {
+  const texture = await new HDRLoader().loadAsync(url);
+  const { data, height, width } = texture.image || {};
+  texture.dispose();
+
+  if (!(data instanceof Uint16Array) || !height || !width) {
+    throw new Error(`Expected ${url} to load as rgba16float HDR data.`);
+  }
+
+  return {
+    data,
+    height,
+    url,
+    width,
+  };
+}
+
+function createHdrTexture(device, label, hdr) {
+  const bytesPerPixel = 8;
+  const texture = device.createTexture({
+    format: 'rgba16float',
+    label,
+    size: [hdr.width, hdr.height],
+    usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING,
+  });
+  device.queue.writeTexture(
+    { texture },
+    hdr.data,
+    { bytesPerRow: hdr.width * bytesPerPixel, rowsPerImage: hdr.height },
+    { height: hdr.height, width: hdr.width },
+  );
+  return texture;
+}
+
+function createPlaceholderEnvironmentTextures(device) {
+  return {
+    envIrradianceTexture: createPlaceholderTexture(device, 'MaterialX env irradiance placeholder', [0.62, 0.66, 0.68, 1]),
+    envRadianceTexture: createPlaceholderTexture(device, 'MaterialX env radiance placeholder', [0.32, 0.36, 0.42, 1]),
+  };
+}
+
+async function createEnvironmentTextures(device) {
+  const start = performance.now();
+  const environmentLabel = prettyAssetName(requestedEnvironment);
+
+  try {
+    setStatus(`Loading environment: ${environmentLabel}`);
+    const [radiance, irradiance] = await Promise.all([
+      loadHdrTexture(requestedEnvironment),
+      loadHdrTexture(getEnvironmentIrradiancePath(requestedEnvironment)),
+    ]);
+    const envIrradianceTexture = createHdrTexture(device, 'MaterialX env irradiance HDR', irradiance);
+    const envRadianceTexture = createHdrTexture(device, 'MaterialX env radiance HDR', radiance);
+
+    setMetric('environment', environmentLabel);
+    setMetric('environmentSize', `${radiance.width}x${radiance.height} / ${irradiance.width}x${irradiance.height}`);
+    recordDuration('environmentLoad', start);
+
+    return {
+      envIrradianceTexture,
+      envRadianceTexture,
+    };
+  } catch (error) {
+    console.warn('Could not load direct WebGPU HDR environment, using placeholder lighting.', error);
+    setMetric('environment', 'Placeholder');
+    setMetric('environmentSize', '1x1 / 1x1');
+    recordDuration('environmentLoad', start);
+    return createPlaceholderEnvironmentTextures(device);
+  }
 }
 
 function saturateNumber(value) {
@@ -2061,6 +2160,7 @@ async function main() {
   setMetric('model', geometry.label);
   recordDuration('modelLoad', meshStart);
   setMetric('mesh', `${geometry.indices.length / 3} triangles`);
+  const environmentTextures = await createEnvironmentTextures(device);
 
   const privateVertexData = new Float32Array(privateVertexFloatCount);
   const privatePixelData = createPrivatePixelUniformData();
@@ -2071,8 +2171,6 @@ async function main() {
   const privatePixelBuffer = createUniformBuffer(device, 'MaterialX PrivateUniforms pixel', privatePixelData.bytes);
   const publicUniformBuffer = createUniformBuffer(device, 'MaterialX PublicUniforms pixel port table', publicUniformData.bytes);
   const lightDataBuffer = createUniformBuffer(device, 'MaterialX LightData pixel placeholder', lightData);
-  const envRadianceTexture = createPlaceholderTexture(device, 'MaterialX env radiance placeholder', [0.32, 0.36, 0.42, 1]);
-  const envIrradianceTexture = createPlaceholderTexture(device, 'MaterialX env irradiance placeholder', [0.62, 0.66, 0.68, 1]);
   const envSampler = device.createSampler({
     addressModeU: 'clamp-to-edge',
     addressModeV: 'clamp-to-edge',
@@ -2083,8 +2181,7 @@ async function main() {
   setMetric('contract', `bindings 0-7 / private ${privatePixelByteLength} B`);
   const materialControl = bindMaterialSelect(device, publicUniformBuffer, publicUniformData);
   const bindGroupResources = {
-    envIrradianceTexture,
-    envRadianceTexture,
+    ...environmentTextures,
     envSampler,
     lightDataBuffer,
     privatePixelBuffer,

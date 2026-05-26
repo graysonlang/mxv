@@ -15,7 +15,7 @@ for (const arg of process.argv.slice(2)) {
 }
 
 if (args.has('help')) {
-  console.log(`Usage: npm run verify:webgpu -- [--url=${defaultUrl}] [--expected-material="Pearl (shadergen)"] [--headed] [--timeout=20000]`);
+  console.log(`Usage: npm run verify:webgpu -- [--url=${defaultUrl}] [--expected-material="Pearl (shadergen)"] [--expected-environment="San Giuseppe Bridge Split"] [--headed] [--timeout=20000]`);
   console.log('');
   console.log('Start the dev server separately, for example: npm run serve -- --port=8080');
   process.exit(0);
@@ -23,6 +23,7 @@ if (args.has('help')) {
 
 const targetUrl = String(args.get('url') || process.env.MXV_VERIFY_URL || defaultUrl);
 const expectedMaterial = String(args.get('expected-material') || process.env.MXV_VERIFY_EXPECTED_MATERIAL || 'Pearl (shadergen)');
+const expectedEnvironment = String(args.get('expected-environment') || process.env.MXV_VERIFY_EXPECTED_ENVIRONMENT || 'San Giuseppe Bridge Split');
 const timeoutMs = Number(args.get('timeout') || process.env.MXV_VERIFY_TIMEOUT || 20_000);
 const headed = args.has('headed') || process.env.MXV_VERIFY_HEADFUL === '1';
 const screenshotPath = path.resolve(String(args.get('screenshot') || process.env.MXV_VERIFY_SCREENSHOT || defaultScreenshot));
@@ -231,6 +232,7 @@ async function pollPageState(client) {
       errors: window.__mxvWebGpuErrors || [],
       fps: text('[data-fps]'),
       metrics: {
+        environment: metric('environment'),
         firstFrame: metric('firstFrame'),
         fragmentAdapter: metric('fragmentAdapter'),
         material: metric('material'),
@@ -254,6 +256,7 @@ function validateReadyState(state) {
   if (state.status !== 'Ready') failures.push(`status is ${state.status || '<blank>'}`);
   if (metrics.renderer !== 'Direct WebGPU') failures.push(`renderer is ${metrics.renderer || '<blank>'}`);
   if (metrics.material !== expectedMaterial) failures.push(`material is ${metrics.material || '<blank>'}`);
+  if (metrics.environment !== expectedEnvironment) failures.push(`environment is ${metrics.environment || '<blank>'}`);
   if (metrics.shaderContract !== '39 public ports / 288 B') {
     failures.push(`shader contract is ${metrics.shaderContract || '<blank>'}`);
   }
@@ -336,6 +339,7 @@ async function main() {
     console.log('Direct WebGPU verification passed');
     console.log(`  url: ${targetUrl}`);
     console.log(`  material: ${state.metrics.material}`);
+    console.log(`  environment: ${state.metrics.environment}`);
     console.log(`  shader contract: ${state.metrics.shaderContract}`);
     console.log(`  vertex adapter: ${state.metrics.vertexAdapter}`);
     console.log(`  fragment adapter: ${state.metrics.fragmentAdapter}`);
