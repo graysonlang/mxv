@@ -15,13 +15,14 @@ for (const arg of process.argv.slice(2)) {
 }
 
 if (args.has('help')) {
-  console.log(`Usage: npm run verify:webgpu -- [--url=${defaultUrl}] [--headed] [--timeout=20000]`);
+  console.log(`Usage: npm run verify:webgpu -- [--url=${defaultUrl}] [--expected-material="Pearl (shadergen)"] [--headed] [--timeout=20000]`);
   console.log('');
   console.log('Start the dev server separately, for example: npm run serve -- --port=8080');
   process.exit(0);
 }
 
 const targetUrl = String(args.get('url') || process.env.MXV_VERIFY_URL || defaultUrl);
+const expectedMaterial = String(args.get('expected-material') || process.env.MXV_VERIFY_EXPECTED_MATERIAL || 'Pearl (shadergen)');
 const timeoutMs = Number(args.get('timeout') || process.env.MXV_VERIFY_TIMEOUT || 20_000);
 const headed = args.has('headed') || process.env.MXV_VERIFY_HEADFUL === '1';
 const screenshotPath = path.resolve(String(args.get('screenshot') || process.env.MXV_VERIFY_SCREENSHOT || defaultScreenshot));
@@ -252,7 +253,7 @@ function validateReadyState(state) {
   if (!state.webgpu) failures.push('navigator.gpu is not available');
   if (state.status !== 'Ready') failures.push(`status is ${state.status || '<blank>'}`);
   if (metrics.renderer !== 'Direct WebGPU') failures.push(`renderer is ${metrics.renderer || '<blank>'}`);
-  if (metrics.material !== 'Pearl (shadergen)') failures.push(`material is ${metrics.material || '<blank>'}`);
+  if (metrics.material !== expectedMaterial) failures.push(`material is ${metrics.material || '<blank>'}`);
   if (metrics.shaderContract !== '39 public ports / 288 B') {
     failures.push(`shader contract is ${metrics.shaderContract || '<blank>'}`);
   }

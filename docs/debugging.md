@@ -66,13 +66,14 @@ In another shell, run:
 npm run verify:webgpu
 ```
 
-The verifier launches system Chrome with WebGPU enabled, opens the direct WebGPU page with the pearl material, waits for shadergen and the generated-vertex adapter to become active, checks for WebGPU validation errors, and writes a screenshot to `test-results/webgpu-direct.png`.
+The verifier launches system Chrome with WebGPU enabled, opens the direct WebGPU page with the pearl material by default, waits for shadergen and the generated adapters to become active, checks for WebGPU validation errors, and writes a screenshot to `test-results/webgpu-direct.png`.
 
 Useful overrides:
 
 ```sh
 npm run verify:webgpu -- --headed
-npm run verify:webgpu -- --url=http://127.0.0.1:8000/webgpu-direct.html?material=pearl
+npm run verify:webgpu -- '--url=http://127.0.0.1:8000/webgpu-direct.html?material=pearl'
+npm run verify:webgpu -- '--url=http://127.0.0.1:8000/webgpu-direct.html?material=brushedMetal' '--expected-material=Brushed Metal (shadergen)'
 MXV_CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" npm run verify:webgpu
 ```
 

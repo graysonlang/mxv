@@ -119,7 +119,7 @@ npm run dump:shadergen
 npm run dump:shadergen -- --sample=standard --generator=wgsl,essl
 ```
 
-The default dump writes the `standard` and `pearl` Wgsl-generator outputs plus a manifest to `vendor/.cache/materialx-shaders`, which is intentionally ignored by git.
+The default dump writes the configured Wgsl-generator sample outputs plus a manifest to `vendor/.cache/materialx-shaders`, which is intentionally ignored by git.
 
 ## Run
 

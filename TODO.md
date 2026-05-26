@@ -8,7 +8,7 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 
 - [ ] Continue the direct WebGPU MaterialX shader spike.
   - Status: in progress.
-  - Current shape: `/webgpu-direct.html` renders the MaterialX shaderball with a direct WebGPU pipeline, generated `standard` and `pearl` material values, generated vertex-stage contract validation, and MaterialX-shaped public/private uniform bindings.
+  - Current shape: `/webgpu-direct.html` renders the MaterialX shaderball with a direct WebGPU pipeline, generated sample material values, generated vertex-stage contract validation, and MaterialX-shaped public/private uniform bindings.
   - Main gap: the fragment stage is still a hand-authored browser WGSL approximation, not a translation of the generated MaterialX pixel shader.
 
 ## Done
@@ -19,7 +19,8 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 - [x] Add explicit viewer entry points for WebGL, WebGPU lab, direct WebGPU, and smoke testing.
 - [x] Make the shell default to the direct WebGPU mode and support fragment-based mode switching.
 - [x] Align WebGPU lab camera controls, initial framing, and clipping behavior with the WebGL viewer.
-- [x] Add material switching for generated `standard` and `pearl` sample values.
+- [x] Add material switching for generated sample values.
+- [x] Add generated coverage samples for metal/anisotropy, transmission/opacity, emission, and sheen/coat.
 - [x] Load the MaterialX shaderball GLB in the direct WebGPU proof draw.
 - [x] Fix direct WebGPU mesh orientation and use single-sided rendering with back-face culling.
 - [x] Capture the current MaterialX `WgslShaderGenerator` reality: it is available, but emits Vulkan-style GLSL rather than browser WGSL.
@@ -50,7 +51,7 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 
 ## Next Tasks
 
-1. Capture a small baseline matrix for `standard` and `pearl` in the WebGL viewer and `/webgpu-direct.html`.
+1. Capture a small baseline matrix for the representative generated samples in the WebGL viewer and `/webgpu-direct.html`.
    - Include first visible frame, steady FPS, frame-time average/p95, material switch CPU time, and material switch GPU completion time.
 
 2. Pick the next fragment-shader strategy.

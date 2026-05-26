@@ -92,7 +92,7 @@ Use this as a periodic check, not as a blocker for the exploratory spike.
 | 1. Capture shader contract | Generate a simple material with ESSL and Wgsl outputs, list uniforms, textures, varyings, attributes, and resource bindings. | Done: initial contract captured for `standard` and `pearl`. |
 | 2. Build minimal WebGPU draw | Render a static mesh with a hand-authored WGSL shader and the same camera framing as the lab. | Done: `/webgpu-direct.html` proof draw added, now loading the MaterialX shaderball GLB with a generated sphere fallback. |
 | 3. Adapt one MaterialX sample | Translate the smallest representative generated shader into browser WGSL and bind the required uniforms/textures. | In progress: `/webgpu-direct.html` now binds the MaterialX-style WebGPU resource slots and shades from the generated public/private uniform contracts; full generated-shader translation remains open. |
-| 4. Add one complex sample | Try a more realistic material such as pearl after the simple case works. | Stop if the second material needs many special cases. |
+| 4. Add coverage samples | Exercise representative standard-surface feature families after the simple case works. | Done: direct page now covers standard, pearl, brushed metal, smoked glass, emissive plastic, and coated fabric sample values. |
 | 5. Measure against WebGL | Compare compile/setup time, steady FPS, frame stability, and interaction latency against the existing WebGL path. | Stop if performance is similar and implementation complexity is materially higher. |
 | 6. Decide next step | Choose product path: continue WebGPU backend, keep as lab, or defer. | Decide based on measured designer-visible benefit. |
 
@@ -101,10 +101,14 @@ Use this as a periodic check, not as a blocker for the exploratory spike.
 Use a deliberately small ladder:
 
 1. Standard/simple: prove pipeline, uniforms, and a basic surface.
-2. Textured material: prove image and sampler bindings.
-3. Pearl: stress a more complex preset that is closer to the real motivation.
+2. Pearl: stress coat, sheen, subsurface, and thin-film-style values that are closer to the real motivation.
+3. Brushed metal: exercise metalness, anisotropy, anisotropy rotation, and coat.
+4. Smoked glass: exercise transmission, opacity, thin-walled behavior, and coat.
+5. Emissive plastic: exercise emission values alongside a conventional surface.
+6. Coated fabric: exercise diffuse roughness, sheen, and coat together.
 
 Pearl is useful as a complexity probe, but it should not be the first shader brought up.
+Texture bindings remain a follow-on sample because they add a new resource-binding family rather than only broadening the public uniform coverage.
 
 ## Phase 1 Findings
 
@@ -312,11 +316,15 @@ MaterialX emits a known warning for the `standard_surface.thin_walled` boolean p
 
 This is not yet a direct translation of the generated `wgsl-complete.pixel.glsl` output. Instead, it is a browser-WGSL bridge that keeps the generated binding numbers, vertex-stage semantics, and public-uniform semantic order while using a compact hand-authored standard-surface approximation for the fragment stage. That gives the spike a real WebGPU resource contract to measure before investing in a broader shader translator.
 
-The direct page includes a material selector for the generated `standard` and `pearl` sample values, and accepts the same state through the URL:
+The direct page includes a material selector for the generated coverage sample values, and accepts the same state through the URL:
 
 ```text
 http://127.0.0.1:8000/webgpu-direct.html?material=standard
 http://127.0.0.1:8000/webgpu-direct.html?material=pearl
+http://127.0.0.1:8000/webgpu-direct.html?material=brushedMetal
+http://127.0.0.1:8000/webgpu-direct.html?material=smokedGlass
+http://127.0.0.1:8000/webgpu-direct.html?material=emissivePlastic
+http://127.0.0.1:8000/webgpu-direct.html?material=coatedFabric
 ```
 
 Next, compare the direct bridge against the WebGL viewer for setup cost, steady FPS, and material-switch latency. If those numbers look promising, the next technical step is to decide whether to port selected generated closure functions into WGSL by hand or build a tiny translator for the narrow subset used by `standard_surface`.
@@ -328,4 +336,4 @@ The direct page now exposes material-switch instrumentation:
 - `Switch GPU`: time from material selection until the queue reports the submitted switch frame as complete.
 - `Switch Avg` and `Switch p95`: rolling stats from manual switches or the built-in switch benchmark.
 
-Use the `Run switches` control on `/webgpu-direct.html` to alternate between `standard` and `pearl` twelve times. This measures the cheap WebGPU uniform-update path before any generated shader translation work is added.
+Use the `Run switches` control on `/webgpu-direct.html` to cycle through the configured generated sample set. This measures the cheap WebGPU uniform-update path before any generated shader translation work is added.
