@@ -235,6 +235,7 @@ async function pollPageState(client) {
         environment: metric('environment'),
         firstFrame: metric('firstFrame'),
         fragmentAdapter: metric('fragmentAdapter'),
+        fragmentTranslator: metric('fragmentTranslator'),
         material: metric('material'),
         renderer: metric('renderer'),
         shaderContract: metric('shaderContract'),
@@ -265,6 +266,9 @@ function validateReadyState(state) {
   }
   if (!/\d+\/\d+ funcs \/ \d+ params/.test(metrics.fragmentAdapter)) {
     failures.push(`fragment adapter is ${metrics.fragmentAdapter || '<blank>'}`);
+  }
+  if (!/\d+\/\d+ translated/.test(metrics.fragmentTranslator)) {
+    failures.push(`fragment translator is ${metrics.fragmentTranslator || '<blank>'}`);
   }
   if (!metrics.firstFrame || metrics.firstFrame === '-') failures.push('first frame metric did not populate');
   if (!state.fps || state.fps === '-') failures.push('fps metric did not populate');
@@ -343,6 +347,7 @@ async function main() {
     console.log(`  shader contract: ${state.metrics.shaderContract}`);
     console.log(`  vertex adapter: ${state.metrics.vertexAdapter}`);
     console.log(`  fragment adapter: ${state.metrics.fragmentAdapter}`);
+    console.log(`  fragment translator: ${state.metrics.fragmentTranslator}`);
     console.log(`  screenshot: ${path.relative(process.cwd(), screenshotPath)}`);
   } finally {
     client?.close();

@@ -318,6 +318,8 @@ MaterialX emits a known warning for the `standard_surface.thin_walled` boolean p
 
 This is not yet a direct translation of the generated `wgsl-complete.pixel.glsl` output. Instead, it is a browser-WGSL bridge that keeps the generated binding numbers, vertex-stage semantics, and public-uniform semantic order while using a compact hand-authored standard-surface approximation for the fragment stage. That gives the spike a real WebGPU resource contract to measure before investing in a broader shader translator.
 
+The spike now includes the first deliberately tiny generated GLSL-to-WGSL translator layer. It extracts selected leaf/helper functions from the Vulkan-style MaterialX pixel source, lowers their signatures and simple bodies into browser WGSL, and compile-checks that translated helper module in the WebGPU device. This translated helper slice does not replace the active shading path yet; it is the foothold for expanding toward `out`/`inout` helpers, overload handling, and eventually a closure-function slice while keeping unsupported GLSL constructs explicit.
+
 The direct page includes a material selector for the generated coverage sample values, and accepts the same state through the URL:
 
 ```text

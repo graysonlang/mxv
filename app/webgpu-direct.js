@@ -4,6 +4,7 @@ import index from './webgpu-direct.html';
 import { Box3, Vector3 } from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
+import { translateMaterialXFragmentGlsl } from '../src/materialx-glsl-translator.js';
 import { materialSamples as materialSampleSources } from '../src/materialx-samples.js';
 
 export function getFilePaths() {
@@ -1248,8 +1249,17 @@ function validateGeneratedPixelSource(source, sampleId) {
     throw new Error(`Generated pixel source no longer contains ported helper functions for "${sampleId}": ${missingPortedHelpers.join(', ')}.`);
   }
 
+  const translatedFragment = translateMaterialXFragmentGlsl(source);
+  if (translatedFragment.skipped.length) {
+    const skipped = translatedFragment.skipped
+      .map(entry => `${entry.name}: ${entry.reason}`)
+      .join('; ');
+    throw new Error(`Generated pixel source is outside the current fragment translator slice for "${sampleId}": ${skipped}`);
+  }
+
   return {
     functionCount: countGeneratedFunctions(source),
+    translatedFragment,
     mainCallArgumentCount: mainCallArguments.length,
     portedHelperCount: portedGeneratedPixelHelpers.length,
     standardSurfaceParameterCount: signatureNames.length,
@@ -1335,6 +1345,7 @@ async function initializeMaterialXShaderSupport(materialControl, pipelineControl
     setMetric('contract', activeSample ? `bindings 0-7 / ${activeSample.privateUniformCount} private ports / ${privatePixelByteLength} B` : '-');
     setMetric('shaderSource', activeSample ? `${activeSample.vertexLines}v / ${activeSample.pixelLines}p lines` : '-');
     setMetric('fragmentAdapter', activeSample ? `${activeSample.pixelContract.portedHelperCount}/${activeSample.pixelContract.functionCount} funcs / ${activeSample.pixelContract.standardSurfaceParameterCount} params` : '-');
+    setMetric('fragmentTranslator', activeSample ? `${activeSample.pixelContract.translatedFragment.translatedCount} translated / ${activeSample.pixelContract.translatedFragment.requestedCount} requested` : '-');
     setMetric('shaderNotes', materialXKnownWarnings.size ? 'bool uniform mapped' : 'none');
     materialControl.refreshOptions();
     materialControl.applyMaterial(activeMaterialId, { updateUrl: false });
@@ -1347,12 +1358,24 @@ async function initializeMaterialXShaderSupport(materialControl, pipelineControl
         setMetric('vertexAdapter', 'bridge fallback');
       }
     }
+    if (activeSample?.pixelContract.translatedFragment.wgsl && pipelineControl.validateGeneratedFragmentTranslation) {
+      try {
+        setStatus('Validating fragment translator');
+        const validationDuration = await pipelineControl.validateGeneratedFragmentTranslation(activeSample.pixelContract.translatedFragment.wgsl);
+        const { requestedCount, translatedCount } = activeSample.pixelContract.translatedFragment;
+        setMetric('fragmentTranslator', `${translatedCount}/${requestedCount} translated / ${formatDuration(validationDuration)}`);
+      } catch (error) {
+        console.warn('Generated fragment translation validation failed.', error);
+        setMetric('fragmentTranslator', 'compile failed');
+      }
+    }
     setStatus('Ready');
   } catch (error) {
     console.error(error);
     setMetric('shaderTarget', 'fallback');
     setMetric('shaderContract', error?.message || String(error));
     setMetric('fragmentAdapter', 'fallback active');
+    setMetric('fragmentTranslator', 'fallback active');
     setMetric('vertexAdapter', 'fallback active');
     setMetric('shaderNotes', 'fallback active');
     setStatus('Shadergen fallback active');
@@ -1869,6 +1892,43 @@ async function createPipeline(device, format, options = {}) {
   }
 }
 
+async function validateGeneratedFragmentTranslation(device, wgsl) {
+  const source = `${wgsl}
+
+@compute @workgroup_size(1)
+fn validateFragmentTranslation() {
+}
+`;
+  device.pushErrorScope('validation');
+  const start = performance.now();
+  try {
+    const shaderModule = device.createShaderModule({
+      code: source,
+      label: 'MaterialX generated fragment translator validation',
+    });
+    if (typeof shaderModule.compilationInfo === 'function') {
+      const info = await shaderModule.compilationInfo();
+      const errors = info.messages
+        .filter(message => message.type === 'error')
+        .map(message => message.message);
+      if (errors.length) {
+        throw new Error(errors.join('; '));
+      }
+    }
+
+    const error = await device.popErrorScope();
+    if (error) {
+      throw error;
+    }
+    return performance.now() - start;
+  } catch (error) {
+    const scopedError = await device.popErrorScope().catch(() => null);
+    const reportedError = scopedError || error;
+    recordWebGpuError('fragment translator validation', reportedError);
+    throw reportedError;
+  }
+}
+
 function bindCanvasControls(canvas) {
   canvas.addEventListener('pointerdown', (event) => {
     viewState.isDragging = true;
@@ -2201,6 +2261,7 @@ async function main() {
       bindGroup = createDirectBindGroup(device, pipeline, bindGroupResources);
       setMetric('vertexAdapter', `${adapted.lineCount} GLSL -> WGSL / ${formatDuration(adapterDuration)}`);
     },
+    validateGeneratedFragmentTranslation: generatedFragmentWgsl => validateGeneratedFragmentTranslation(device, generatedFragmentWgsl),
   };
 
   initializeMaterialXShaderSupport(materialControl, pipelineControl).catch((error) => {

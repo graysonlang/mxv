@@ -39,12 +39,13 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 - [x] Port `mx_rotate_vector3` and use it for specular and coat tangent rotation.
 - [x] Route direct lab lighting through generated-style `numActiveLightSources` and `sampleLightSource` helpers.
 - [x] Bind real MaterialX HDR radiance and irradiance environment maps in the direct WebGPU path, with 1x1 fallback textures.
+- [x] Add an initial generated GLSL-to-WGSL translator scaffold for a compile-checked helper-function slice.
 
 ## In Progress
 
 - [ ] Phase 3 direct WebGPU bridge.
-  - Status: binding contract is active; generated fragment source is validated for the expected standard-surface shape; the browser WGSL fragment path now mirrors the generated outer `main()` to standard-surface call flow; full closure-function translation remains open.
-  - Next decision: hand-port the smallest useful generated standard-surface slice, build a tiny translator for the observed Vulkan-style GLSL subset, or defer until upstream emits browser WGSL.
+  - Status: binding contract is active; generated fragment source is validated for the expected standard-surface shape; the browser WGSL fragment path now mirrors the generated outer `main()` to standard-surface call flow; a narrow generated GLSL-to-WGSL translator now compiles a first helper-function slice in the browser.
+  - Next decision: expand the translator through `out`/`inout` helper functions and the smallest useful closure slice, while keeping the bridge as a fallback benchmark harness.
 
 - [ ] Performance comparison against the WebGL viewer.
   - Status: direct page exposes first-frame, frame-time, FPS, material upload, switch-frame, switch-GPU, average, and p95 metrics.
@@ -55,10 +56,10 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 1. Capture a small baseline matrix for the representative generated samples in the WebGL viewer and `/webgpu-direct.html`.
    - Include first visible frame, steady FPS, frame-time average/p95, material switch CPU time, and material switch GPU completion time.
 
-2. Pick the next fragment-shader strategy.
-   - Option A: hand-port a narrow set of generated closure/math functions into browser WGSL.
-   - Option B: build a deliberately tiny translator for the generated Vulkan-style GLSL subset.
-   - Option C: keep the bridge as a benchmark harness and wait for a future MaterialX runtime with true browser WGSL.
+2. Expand the tiny translator for the generated Vulkan-style GLSL subset.
+   - Add `out`/`inout` return-value lowering for simple helper functions.
+   - Add overload name mangling where WGSL cannot represent MaterialX GLSL overloads directly.
+   - Keep unsupported constructs explicit so this does not become an accidental general shader compiler.
 
 3. Bring over one small generated fragment slice if the measured performance looks promising.
    - Start from the validated generated `NG_standard_surface_surfaceshader_100` signature and `main()` call order.
