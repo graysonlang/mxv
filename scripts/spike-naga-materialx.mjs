@@ -1,19 +1,22 @@
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import {
+  createNagaTranslator,
+  nagaVersion,
+  preprocessMaterialXGlsl,
+} from '@graysonlang/naga';
 
 const repoRoot = process.cwd();
 const shaderCacheDir = path.join(repoRoot, 'vendor/.cache/materialx-shaders');
 const outputRoot = path.join(repoRoot, 'vendor/.cache/naga-materialx');
-const defaultNaga = path.join(repoRoot, 'vendor/.cache/naga-cli/bin/naga');
-const nagaBin = process.env.MXV_NAGA || defaultNaga;
 
-const nagaVersion = await run(nagaBin, ['--version']);
 await run(process.execPath, [
   'scripts/dump-materialx-shaders.mjs',
   '--sample=all',
   '--generator=wgsl',
 ]);
+const translator = await createNagaTranslator();
 
 const sampleIds = (await readdir(shaderCacheDir, { withFileTypes: true }))
   .filter(entry => entry.isDirectory())
@@ -29,12 +32,12 @@ for (const sampleId of sampleIds) {
   const sampleOutputDir = path.join(outputRoot, sampleId);
   await mkdir(sampleOutputDir, { recursive: true });
 
-  const vertexResult = await convertStage(sampleId, 'vertex', 'vert', sampleOutputDir);
-  const pixelResult = await convertStage(sampleId, 'pixel', 'frag', sampleOutputDir);
+  const vertexResult = await convertStage(sampleId, 'vertex', sampleOutputDir);
+  const pixelResult = await convertStage(sampleId, 'pixel', sampleOutputDir);
   results.push({ pixel: pixelResult, sampleId, vertex: vertexResult });
 }
 
-console.log(`Naga MaterialX spike used ${nagaVersion.stdout.trim() || nagaBin}`);
+console.log(`Naga MaterialX spike used @graysonlang/naga ${nagaVersion}`);
 console.log(`Naga MaterialX spike wrote ${path.relative(repoRoot, outputRoot)}`);
 for (const result of results) {
   console.log(`${result.sampleId}: vertex ${formatResult(result.vertex)}, pixel ${formatResult(result.pixel)}`);
@@ -45,7 +48,7 @@ if (failures.length) {
   process.exitCode = 1;
 }
 
-async function convertStage(sampleId, stageName, nagaStage, sampleOutputDir) {
+async function convertStage(sampleId, stageName, sampleOutputDir) {
   const sourcePath = path.join(shaderCacheDir, sampleId, `wgsl-complete.${stageName}.glsl`);
   const source = await readFile(sourcePath, 'utf8');
   const preprocessed = preprocessMaterialXGlsl(source);
@@ -53,44 +56,22 @@ async function convertStage(sampleId, stageName, nagaStage, sampleOutputDir) {
   const outputPath = path.join(sampleOutputDir, `${stageName}.wgsl`);
   await writeFile(preprocessedPath, preprocessed);
 
-  const result = await run(nagaBin, [
-    '--input-kind',
-    'glsl',
-    '--shader-stage',
-    nagaStage,
-    preprocessedPath,
-    outputPath,
-  ], { reject: false });
-
-  if (result.code !== 0) {
+  try {
+    const result = translator.translateGlslToWgsl(preprocessed, { stage: stageName });
+    await writeFile(outputPath, result.wgsl);
     return {
+      lines: result.wgsl.split('\n').length,
+      ok: true,
+      outputPath,
+    };
+  } catch (error) {
+    return {
+      error,
       ok: false,
       outputPath,
-      stderr: result.stderr.trim(),
+      stderr: error?.result?.diagnostics || error?.message || String(error),
     };
   }
-
-  const output = await readFile(outputPath, 'utf8');
-  return {
-    lines: output.split('\n').length,
-    ok: true,
-    outputPath,
-  };
-}
-
-function preprocessMaterialXGlsl(source) {
-  return source
-    .replace(/^#define\s+(thin_walled|u_refractionTwoSided)\s+bool\(\1\)\n/gm, '')
-    .replace(/\bif\s*\(\s*u_refractionTwoSided\s*\)/g, 'if (u_refractionTwoSided != 0)')
-    .replace(/\bopacity\s*,\s*thin_walled\s*,\s*geomprop_Nworld_out\b/g, 'opacity, (thin_walled != 0), geomprop_Nworld_out')
-    // Chrome's WGSL uniformity analysis rejects Naga's translated fwidth path
-    // inside the generated subsurface helper. Keep this as a narrow MaterialX
-    // spike shim until we can either prove the upstream output is uniform or
-    // bind a fuller subsurface approximation directly.
-    .replace(
-      /float curvature = length\(fwidth\(N\)\) \/ length\(fwidth\(P\)\);\n\s*float radius = 1\.0 \/ max\(curvature, 0\.01\);/,
-      'float radius = max(max(mfp.x, mfp.y), max(mfp.z, 0.01));',
-    );
 }
 
 function formatResult(result) {
@@ -116,10 +97,7 @@ function run(command, args, options = {}) {
       stderr += chunk;
     });
     child.on('error', (error) => {
-      const hint = command === nagaBin
-        ? `${error.message}. Install naga-cli with: cargo install naga-cli --root vendor/.cache/naga-cli`
-        : error.message;
-      rejectPromise(new Error(hint));
+      rejectPromise(error);
     });
     child.on('close', (code) => {
       if (reject && code !== 0) {

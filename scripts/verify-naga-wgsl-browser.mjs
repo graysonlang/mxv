@@ -16,8 +16,6 @@ for (const arg of process.argv.slice(2)) {
 
 if (args.has('help')) {
   console.log('Usage: npm run verify:naga-wgsl -- [--skip-spike] [--skip-pipeline] [--allow-known-failures] [--headed] [--timeout=20000]');
-  console.log('');
-  console.log('Set MXV_NAGA=/path/to/naga to use a non-default naga-cli binary.');
   process.exit(0);
 }
 

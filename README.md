@@ -121,14 +121,13 @@ npm run dump:shadergen -- --sample=standard --generator=wgsl,essl
 
 The default dump writes the configured Wgsl-generator sample outputs plus a manifest to `vendor/.cache/materialx-shaders`, which is intentionally ignored by git.
 
-To test whether Naga can translate the MaterialX Vulkan-style GLSL output to browser WGSL, install `naga-cli` locally and run the spike:
+To test whether Naga can translate the MaterialX Vulkan-style GLSL output to browser WGSL, run the spike:
 
 ```sh
-cargo install naga-cli --root vendor/.cache/naga-cli
 npm run spike:naga
 ```
 
-The spike writes translated WGSL to `vendor/.cache/naga-materialx`, also ignored by git. Builds copy those cached WGSL fixtures into `dist/vendor/naga-materialx` when they are present. Set `MXV_NAGA=/path/to/naga` to use another Naga binary.
+The spike uses the prebuilt `@graysonlang/naga` package and writes translated WGSL to `vendor/.cache/naga-materialx`, also ignored by git. Builds copy those cached WGSL fixtures into `dist/vendor/naga-materialx` when they are present.
 
 Browser-verify the generated Naga WGSL with Chrome/WebGPU:
 
