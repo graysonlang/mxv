@@ -82,7 +82,15 @@ function preprocessMaterialXGlsl(source) {
   return source
     .replace(/^#define\s+(thin_walled|u_refractionTwoSided)\s+bool\(\1\)\n/gm, '')
     .replace(/\bif\s*\(\s*u_refractionTwoSided\s*\)/g, 'if (u_refractionTwoSided != 0)')
-    .replace(/\bopacity\s*,\s*thin_walled\s*,\s*geomprop_Nworld_out\b/g, 'opacity, (thin_walled != 0), geomprop_Nworld_out');
+    .replace(/\bopacity\s*,\s*thin_walled\s*,\s*geomprop_Nworld_out\b/g, 'opacity, (thin_walled != 0), geomprop_Nworld_out')
+    // Chrome's WGSL uniformity analysis rejects Naga's translated fwidth path
+    // inside the generated subsurface helper. Keep this as a narrow MaterialX
+    // spike shim until we can either prove the upstream output is uniform or
+    // bind a fuller subsurface approximation directly.
+    .replace(
+      /float curvature = length\(fwidth\(N\)\) \/ length\(fwidth\(P\)\);\n\s*float radius = 1\.0 \/ max\(curvature, 0\.01\);/,
+      'float radius = max(max(mfp.x, mfp.y), max(mfp.z, 0.01));',
+    );
 }
 
 function formatResult(result) {

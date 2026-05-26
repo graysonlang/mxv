@@ -136,11 +136,7 @@ Browser-compile the generated Naga WGSL with Chrome/WebGPU:
 npm run verify:naga-wgsl
 ```
 
-The strict verifier currently reports the known pixel-stage uniformity blocker around `fwidth`. To keep the check useful while tracking that blocker:
-
-```sh
-npm run verify:naga-wgsl -- --allow-known-failures
-```
+The Naga spike includes two narrow MaterialX pre-passes: boolean uniform alias lowering and a derivative-free fallback for the generated subsurface radius path that otherwise trips Chrome's `fwidth` uniformity analysis. With those shims, the strict verifier should compile every generated vertex and pixel module in the browser.
 
 ## Run
 

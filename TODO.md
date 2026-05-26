@@ -41,13 +41,14 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 - [x] Bind real MaterialX HDR radiance and irradiance environment maps in the direct WebGPU path, with 1x1 fallback textures.
 - [x] Add an initial generated GLSL-to-WGSL translator scaffold for a compile-checked helper-function slice.
 - [x] Add a repeatable Naga CLI spike; after a tiny bool-uniform pre-pass, Naga converts all six generated vertex and pixel shaders to WGSL.
-- [x] Add a browser compile verifier for Naga WGSL output; all generated vertex modules pass, while all generated pixel modules hit the same known `fwidth` uniformity rule.
+- [x] Add a browser compile verifier for Naga WGSL output; all generated vertex and pixel modules now pass strict Chrome/WebGPU shader-module compilation.
+- [x] Add a narrow Naga pre-pass for the generated subsurface `fwidth` path, replacing curvature-derived radius with a derivative-free material radius fallback for the spike.
 
 ## In Progress
 
 - [ ] Phase 3 direct WebGPU bridge.
-  - Status: binding contract is active; generated fragment source is validated for the expected standard-surface shape; the browser WGSL fragment path now mirrors the generated outer `main()` to standard-surface call flow; a narrow custom translator compiles a first helper-function slice; Naga translates the full emitted shader fixtures offline; Chrome accepts the Naga vertex modules and rejects the pixel modules on a known `fwidth` uniformity rule.
-  - Next decision: patch or precondition the Naga pixel output around the `mx_subsurface_scattering_approx` / `fwidth` path, then re-run the strict browser compile check.
+  - Status: binding contract is active; generated fragment source is validated for the expected standard-surface shape; the browser WGSL fragment path now mirrors the generated outer `main()` to standard-surface call flow; a narrow custom translator compiles a first helper-function slice; Naga translates the full emitted shader fixtures offline; Chrome accepts the generated Naga vertex and pixel modules after the bool-uniform and subsurface-radius pre-passes.
+  - Next decision: compare the browser-accepted Naga output bindings, entry points, and resource layout against the direct WebGPU harness, then try a pipeline-level compile before attempting a rendered path.
 
 - [ ] Performance comparison against the WebGL viewer.
   - Status: direct page exposes first-frame, frame-time, FPS, material upload, switch-frame, switch-GPU, average, and p95 metrics.
@@ -59,8 +60,8 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
    - Include first visible frame, steady FPS, frame-time average/p95, material switch CPU time, and material switch GPU completion time.
 
 2. Evaluate the Naga path before growing the custom translator.
-   - Resolve the browser WGSL uniformity failure around `fwidth` in the generated subsurface path.
-   - Compare the Naga output resource bindings and entry points against the direct WebGPU harness after strict browser compilation passes.
+   - Compare the Naga output resource bindings and entry points against the direct WebGPU harness.
+   - Add a pipeline-level compile check with the real direct WebGPU bind group layout.
    - If it holds, consider a build-time wrapper first and a WASM wrapper later.
 
 3. Bring over one small generated fragment slice if the measured performance looks promising.
