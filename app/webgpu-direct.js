@@ -7,6 +7,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { translateMaterialXFragmentGlsl } from '../src/materialx-glsl-translator.js';
 import { materialSamples as materialSampleSources } from '../src/materialx-samples.js';
+import { createNagaTranslator, nagaVersion } from '@graysonlang/naga';
 
 export function getFilePaths() {
   return { index };
@@ -16,6 +17,7 @@ const defaultGeometry = 'vendor/MaterialX/resources/Geometry/shaderball.glb';
 const defaultEnvironment = 'vendor/MaterialX/resources/Lights/san_giuseppe_bridge_split.hdr';
 const defaultLightRig = 'vendor/MaterialX/resources/Lights/san_giuseppe_bridge_split.mtlx';
 const runtimeBaseUrl = new URL('./vendor/materialx-runtime/', import.meta.url);
+const nagaRuntimeBaseUrl = new URL('./vendor/naga-runtime/', import.meta.url);
 const nagaShaderBaseUrl = new URL('./vendor/naga-materialx/', import.meta.url);
 const appStartTime = performance.now();
 const cameraFovDegrees = 60;
@@ -62,6 +64,7 @@ let activeDirectLight = {
 };
 const materialXBoolUniformWarning = 'WGSL does not allow boolean types to be stored in uniform or storage address spaces.';
 const materialXKnownWarnings = new Set();
+let nagaTranslatorPromise;
 const webGpuErrors = [];
 if (typeof window !== 'undefined') {
   window.__mxvWebGpuErrors = webGpuErrors;
@@ -1110,6 +1113,13 @@ async function loadMaterialX() {
   });
 }
 
+function loadNagaTranslator() {
+  nagaTranslatorPromise ??= createNagaTranslator({
+    wasmUrl: new URL('graysonlang_naga.wasm', nagaRuntimeBaseUrl).href,
+  });
+  return nagaTranslatorPromise;
+}
+
 function handleMaterialXPrintErr(value) {
   const message = String(value);
   if (message.includes(materialXBoolUniformWarning)) {
@@ -1564,7 +1574,7 @@ function validateGeneratedPixelSource(source, sampleId) {
   };
 }
 
-async function generateMaterialSample(mx, sampleId, lightRigXml) {
+async function generateMaterialSample(mx, sampleId, lightRigXml, nagaTranslator) {
   if (!mx.WgslShaderGenerator) {
     throw new Error('MaterialX runtime does not expose WgslShaderGenerator.');
   }
@@ -1592,6 +1602,13 @@ async function generateMaterialSample(mx, sampleId, lightRigXml) {
   const shader = generator.generate(element.getNamePath(), element, context);
   const vertexSource = shader.getSourceCode('vertex');
   const pixelSource = shader.getSourceCode('pixel');
+  const translationStart = performance.now();
+  const [translatedVertex, translatedPixel] = [
+    nagaTranslator.translateMaterialXGlslToWgsl(vertexSource, { stage: 'vertex' }),
+    nagaTranslator.translateMaterialXGlslToWgsl(pixelSource, { stage: 'fragment' }),
+  ];
+  const fragmentSource = encodeNagaFragmentOutput(translatedPixel.wgsl);
+  const translationDuration = performance.now() - translationStart;
   const pixelStage = shader.getStage('pixel');
   const uniformBlocks = pixelStage.getUniformBlocks();
   const publicUniforms = uniformBlocks.PublicUniforms;
@@ -1629,6 +1646,14 @@ async function generateMaterialSample(mx, sampleId, lightRigXml) {
     target: typeof generator.getTarget === 'function' ? generator.getTarget() : 'unknown',
     pixelContract,
     privateUniformCount,
+    naga: {
+      fragmentLineCount: fragmentSource.split('\n').length,
+      fragmentSource,
+      source: 'runtime',
+      translationDuration,
+      vertexLineCount: translatedVertex.wgsl.split('\n').length,
+      vertexSource: translatedVertex.wgsl,
+    },
     textureBindings,
     uniformCount: uniformLayout.ports.length,
     uniformLayout,
@@ -1642,11 +1667,12 @@ async function generateMaterialSample(mx, sampleId, lightRigXml) {
 
 async function initializeMaterialXShaderSupport(materialControl, pipelineControl = {}) {
   try {
-    setStatus('Loading MaterialX shadergen');
+    setStatus('Loading MaterialX shadergen and Naga');
     const materialXStart = performance.now();
-    const [mx, lightRigXml] = await Promise.all([
+    const [mx, lightRigXml, nagaTranslator] = await Promise.all([
       loadMaterialX(),
       fetchTextResource(defaultLightRig, 'Default light rig'),
+      loadNagaTranslator(),
     ]);
     recordDuration('materialXLoad', materialXStart);
 
@@ -1654,7 +1680,7 @@ async function initializeMaterialXShaderSupport(materialControl, pipelineControl
     const shaderStart = performance.now();
     const generatedEntries = [];
     for (const sampleId of Object.keys(materialSampleSources)) {
-      generatedEntries.push([sampleId, await generateMaterialSample(mx, sampleId, lightRigXml)]);
+      generatedEntries.push([sampleId, await generateMaterialSample(mx, sampleId, lightRigXml, nagaTranslator)]);
     }
 
     materialSamples = Object.fromEntries(generatedEntries);
@@ -2743,6 +2769,19 @@ function encodeNagaFragmentOutput(source) {
 
 async function loadNagaShaderPair(materialId) {
   const sampleId = Object.hasOwn(materialSamples, materialId) ? materialId : 'standard';
+  const material = materialSamples[sampleId] || materialSamples.standard;
+  if (material?.naga?.vertexSource && material?.naga?.fragmentSource) {
+    return {
+      fragmentLineCount: material.naga.fragmentLineCount,
+      fragmentSource: material.naga.fragmentSource,
+      sampleId,
+      source: 'runtime',
+      translationDuration: material.naga.translationDuration,
+      vertexLineCount: material.naga.vertexLineCount,
+      vertexSource: material.naga.vertexSource,
+    };
+  }
+
   const baseUrl = new URL(`${encodeURIComponent(sampleId)}/`, nagaShaderBaseUrl);
   const [vertexSource, rawFragmentSource] = await Promise.all([
     fetchTextResource(new URL('vertex.wgsl', baseUrl), `${sampleId} Naga vertex WGSL`),
@@ -2754,6 +2793,7 @@ async function loadNagaShaderPair(materialId) {
     fragmentLineCount: fragmentSource.split('\n').length,
     fragmentSource,
     sampleId,
+    source: 'fixture',
     vertexLineCount: vertexSource.split('\n').length,
     vertexSource,
   };
@@ -2780,7 +2820,10 @@ async function createNagaPipeline(device, format, materialId) {
   setMetric('shaderTarget', 'Naga WGSL');
   setMetric('vertexAdapter', `Naga ${loaded.vertexLineCount} WGSL lines`);
   setMetric('fragmentAdapter', `Naga ${loaded.fragmentLineCount} WGSL lines`);
-  setMetric('fragmentTranslator', `Naga fixture / ${formatDuration(performance.now() - loadStart)}`);
+  const translationDetail = loaded.source === 'runtime'
+    ? `runtime Naga ${nagaVersion} / ${formatDuration(loaded.translationDuration)}`
+    : `Naga fixture / ${formatDuration(performance.now() - loadStart)}`;
+  setMetric('fragmentTranslator', translationDetail);
   setMetric('shaderNotes', materialXKnownWarnings.size ? 'bool uniform mapped / Naga translated' : 'Naga translated');
   return pipeline;
 }

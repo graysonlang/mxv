@@ -16,11 +16,15 @@ const materialXResourceExtensions = new Set([
   '.tga',
 ]);
 const runtimeExtensions = new Set(['.data', '.js', '.wasm']);
+const nagaRuntimeExtensions = new Set(['.wasm']);
 const nagaShaderExtensions = new Set(['.wgsl']);
 const requiredRuntimeFiles = [
   'JsMaterialXGenShader.data',
   'JsMaterialXGenShader.js',
   'JsMaterialXGenShader.wasm',
+];
+const requiredNagaRuntimeFiles = [
+  'graysonlang_naga.wasm',
 ];
 const materialXResourceRoot = 'vendor/MaterialX/resources';
 const materialXViewerAssetRoot = 'vendor/MaterialX/javascript/MaterialXView/public';
@@ -115,6 +119,16 @@ function resolveMaterialXRuntimeRoot(root) {
   }
 }
 
+function resolveNagaRuntimeRoot(root) {
+  const requireFromRoot = createRequire(path.join(root, 'package.json'));
+  try {
+    const packageJsonPath = requireFromRoot.resolve('@graysonlang/naga/package.json');
+    return path.join(path.dirname(packageJsonPath), 'dist', 'runtime');
+  } catch (error) {
+    throw new Error('Missing @graysonlang/naga runtime package. Run `npm install` before building.', { cause: error });
+  }
+}
+
 async function copyMaterialXRuntime(root, outdir) {
   const runtimeRoot = resolveMaterialXRuntimeRoot(root);
   await Promise.all(requiredRuntimeFiles.map(async (filename) => {
@@ -132,6 +146,30 @@ async function copyMaterialXRuntime(root, outdir) {
 
     const rel = path.relative(runtimeRoot, file);
     const destRel = path.join('vendor', 'materialx-runtime', rel);
+    await copyIfChanged(file, path.join(outdir, destRel));
+    copied.push(destRel);
+  }
+
+  return copied.sort();
+}
+
+async function copyNagaRuntime(root, outdir) {
+  const runtimeRoot = resolveNagaRuntimeRoot(root);
+  await Promise.all(requiredNagaRuntimeFiles.map(async (filename) => {
+    const runtimeFile = path.join(runtimeRoot, filename);
+    if (!await exists(runtimeFile)) {
+      throw new Error(`Missing @graysonlang/naga runtime file: ${filename}. Run \`npm install\` to restore the runtime package.`);
+    }
+  }));
+
+  const files = await walkFiles(runtimeRoot);
+  const copied = [];
+
+  for (const file of files) {
+    if (!nagaRuntimeExtensions.has(path.extname(file).toLowerCase())) continue;
+
+    const rel = path.relative(runtimeRoot, file);
+    const destRel = path.join('vendor', 'naga-runtime', rel);
     await copyIfChanged(file, path.join(outdir, destRel));
     copied.push(destRel);
   }
@@ -187,6 +225,7 @@ export async function prepareStaticAssets({
     rm(path.join(outdir, 'asset-manifest.json'), { force: true }),
     rm(path.join(outdir, 'assets'), { recursive: true, force: true }),
     rm(path.join(outdir, 'vendor', 'materialx-runtime'), { recursive: true, force: true }),
+    rm(path.join(outdir, 'vendor', 'naga-runtime'), { recursive: true, force: true }),
     rm(path.join(outdir, 'vendor', 'naga-materialx'), { recursive: true, force: true }),
     rm(path.join(outdir, 'vendor', 'MaterialX', 'resources'), { recursive: true, force: true }),
     rm(path.join(outdir, 'vendor', 'MaterialX', 'javascript', 'MaterialXView', 'public'), { recursive: true, force: true }),
@@ -197,12 +236,14 @@ export async function prepareStaticAssets({
     materialXPathPaths,
     materialXResourcePaths,
     materialXViewerAssetPaths,
+    nagaRuntimePaths,
     nagaShaderPaths,
   ] = await Promise.all([
     copyMatching(root, outdir, 'assets', imageExtensions),
     copyMaterialXRuntime(root, outdir),
     copyMatching(root, outdir, materialXResourceRoot, materialXResourceExtensions, { required: true }),
     copyViewerAssets(root, outdir),
+    copyNagaRuntime(root, outdir),
     copyNagaShaderAssets(root, outdir),
   ]);
 
@@ -211,6 +252,7 @@ export async function prepareStaticAssets({
     materialXPathPaths,
     materialXResourcePaths,
     materialXViewerAssetPaths,
+    nagaRuntimePaths,
     nagaShaderPaths,
   };
 

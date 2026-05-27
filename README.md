@@ -121,13 +121,13 @@ npm run dump:shadergen -- --sample=standard --generator=wgsl,essl
 
 The default dump writes the configured Wgsl-generator sample outputs plus a manifest to `vendor/.cache/materialx-shaders`, which is intentionally ignored by git.
 
-To test whether Naga can translate the MaterialX Vulkan-style GLSL output to browser WGSL, run the spike:
+To inspect the generated Naga translation artifacts outside the app, run the spike:
 
 ```sh
 npm run spike:naga
 ```
 
-The spike uses the prebuilt `@graysonlang/naga` package and writes translated WGSL to `vendor/.cache/naga-materialx`, also ignored by git. Builds copy those cached WGSL fixtures into `dist/vendor/naga-materialx` when they are present.
+The spike uses the prebuilt `@graysonlang/naga` package and writes translated WGSL to `vendor/.cache/naga-materialx`, also ignored by git. Builds copy those cached WGSL fixtures into `dist/vendor/naga-materialx` when they are present, but normal browser rendering translates MaterialX shader output at runtime through the Naga WASM package.
 
 Browser-verify the generated Naga WGSL with Chrome/WebGPU:
 
@@ -177,7 +177,7 @@ http://127.0.0.1:8000/webgpu.html
 http://127.0.0.1:8000/webgpu-direct.html
 ```
 
-The direct WebGPU page loads the MaterialX shaderball and the `San Giuseppe Bridge Split` HDR environment by default. It defaults to the Naga-translated generated MaterialX shader path, with `shader=bridge` still available for contract diagnostics. The radiance texture is uploaded with a generated mip chain so MaterialX `u_envRadianceMips` lookups can exercise rough and anisotropic environment sampling. It also accepts `material`, `shader`, `envSamples`, `envIntensity`, and `environment` query params for focused shader checks:
+The direct WebGPU page loads the MaterialX shaderball and the `San Giuseppe Bridge Split` HDR environment by default. It defaults to the runtime Naga-translated MaterialX shader path, with `shader=bridge` still available for contract diagnostics. The radiance texture is uploaded with a generated mip chain so MaterialX `u_envRadianceMips` lookups can exercise rough and anisotropic environment sampling. It also accepts `material`, `shader`, `envSamples`, `envIntensity`, and `environment` query params for focused shader checks:
 
 ```text
 http://127.0.0.1:8000/webgpu-direct.html?material=pearl

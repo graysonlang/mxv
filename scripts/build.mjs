@@ -17,6 +17,10 @@ function getOptions(args, verbose, logger) {
     loader: {
       '.html': 'file',
     },
+    external: [
+      'node:fs/promises',
+      'node:url',
+    ],
     outdir: 'dist',
     plugins: [
       pluginImp({ logger, verbose }),

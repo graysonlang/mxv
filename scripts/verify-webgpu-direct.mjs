@@ -276,7 +276,7 @@ function validateReadyState(state) {
     if (!/^Naga \d+ WGSL lines$/.test(metrics.fragmentAdapter)) {
       failures.push(`fragment adapter is ${metrics.fragmentAdapter || '<blank>'}`);
     }
-    if (!/^Naga fixture/.test(metrics.fragmentTranslator)) {
+    if (!/^(runtime Naga|Naga fixture)/.test(metrics.fragmentTranslator)) {
       failures.push(`fragment translator is ${metrics.fragmentTranslator || '<blank>'}`);
     }
   } else {
