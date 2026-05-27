@@ -127,7 +127,7 @@ To inspect the generated Naga translation artifacts outside the app, run the spi
 npm run spike:naga
 ```
 
-The spike uses the prebuilt `@graysonlang/naga` package and writes translated WGSL to `vendor/.cache/naga-materialx`, also ignored by git. Builds copy those cached WGSL fixtures into `dist/vendor/naga-materialx` when they are present, but normal browser rendering translates MaterialX shader output at runtime through the Naga WASM package.
+The spike uses the prebuilt `@graysonlang/naga` package and writes translated WGSL to `vendor/.cache/naga-materialx`, also ignored by git. Normal browser rendering translates MaterialX shader output at runtime through the Naga WASM package, so builds do not copy those cached WGSL fixtures unless `MXV_COPY_NAGA_FIXTURES=1` is set.
 
 Browser-verify the generated Naga WGSL with Chrome/WebGPU:
 

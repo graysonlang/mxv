@@ -29,6 +29,7 @@ const requiredNagaRuntimeFiles = [
 const materialXResourceRoot = 'vendor/MaterialX/resources';
 const materialXViewerAssetRoot = 'vendor/MaterialX/javascript/MaterialXView/public';
 const nagaShaderRoot = 'vendor/.cache/naga-materialx';
+const copyNagaShaderFixtures = process.env.MXV_COPY_NAGA_FIXTURES === '1';
 
 async function exists(filePath) {
   try {
@@ -244,7 +245,7 @@ export async function prepareStaticAssets({
     copyMatching(root, outdir, materialXResourceRoot, materialXResourceExtensions, { required: true }),
     copyViewerAssets(root, outdir),
     copyNagaRuntime(root, outdir),
-    copyNagaShaderAssets(root, outdir),
+    copyNagaShaderFixtures ? copyNagaShaderAssets(root, outdir) : [],
   ]);
 
   const manifest = {
