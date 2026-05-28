@@ -73,7 +73,8 @@ const maxPublicUniformByteLength = 4096;
 const environmentBackgroundFloatCount = 16;
 const lightDataByteLength = 48;
 const vertexStrideFloats = 11;
-const environmentToneSampleLimit = 65536;
+const environmentToneGridColumns = 11;
+const environmentToneGridRows = 7;
 const environmentToneTargetP95 = 0.72;
 const environmentToneMaxExposure = 32;
 let activeDirectLight = {
@@ -83,7 +84,9 @@ let activeDirectLight = {
   type: 1,
 };
 let activeLightRigPath = '';
+let activeEnvironmentToneSource = null;
 let activeEnvironmentToneStats = null;
+let environmentToneLastMetricTime = 0;
 const materialXBoolUniformWarning = 'WGSL does not allow boolean types to be stored in uniform or storage address spaces.';
 const materialXKnownWarnings = new Set();
 let nagaTranslatorPromise;
@@ -2289,26 +2292,7 @@ function formatToneValue(value) {
   return value.toPrecision(2);
 }
 
-function createEnvironmentToneStats(hdr) {
-  const pixelCount = hdr.width * hdr.height;
-  const stride = Math.max(1, Math.floor(pixelCount / environmentToneSampleLimit));
-  const luminanceValues = [];
-  let sum = 0;
-  let max = 0;
-
-  for (let pixel = 0; pixel < pixelCount; pixel += stride) {
-    const offset = pixel * 4;
-    const red = halfToFloat(hdr.data[offset]);
-    const green = halfToFloat(hdr.data[offset + 1]);
-    const blue = halfToFloat(hdr.data[offset + 2]);
-    const luminance = red * 0.2126 + green * 0.7152 + blue * 0.0722;
-    if (!Number.isFinite(luminance) || luminance <= 0) continue;
-
-    luminanceValues.push(luminance);
-    sum += luminance;
-    max = Math.max(max, luminance);
-  }
-
+function createLuminanceStats(luminanceValues) {
   if (!luminanceValues.length) {
     return {
       average: 0,
@@ -2322,19 +2306,67 @@ function createEnvironmentToneStats(hdr) {
   }
 
   luminanceValues.sort((a, b) => a - b);
+  const sum = luminanceValues.reduce((total, value) => total + value, 0);
   const percentile = value => luminanceValues[
     Math.min(luminanceValues.length - 1, Math.max(0, Math.floor((luminanceValues.length - 1) * value)))
   ];
 
   return {
     average: sum / luminanceValues.length,
-    max,
+    max: luminanceValues[luminanceValues.length - 1],
     p50: percentile(0.5),
     p90: percentile(0.9),
     p95: percentile(0.95),
     p99: percentile(0.99),
     sampleCount: luminanceValues.length,
   };
+}
+
+function sampleEnvironmentLuminance(source, direction) {
+  if (!source?.data || !source.width || !source.height) return 0;
+  const length = Math.hypot(direction[0], direction[1], direction[2]) || 1;
+  const x = direction[0] / length;
+  const y = direction[1] / length;
+  const z = direction[2] / length;
+  const u = Math.atan2(x, -z) * 0.15915494309189535 + 0.5;
+  const v = Math.acos(Math.min(1, Math.max(-1, y))) * 0.3183098861837907;
+  const rotatedU = ((u + 0.5) % 1 + 1) % 1;
+  const texelX = Math.min(source.width - 1, Math.max(0, Math.floor(rotatedU * source.width)));
+  const texelY = Math.min(source.height - 1, Math.max(0, Math.floor(v * source.height)));
+  const offset = (texelY * source.width + texelX) * 4;
+  const red = halfToFloat(source.data[offset]);
+  const green = halfToFloat(source.data[offset + 1]);
+  const blue = halfToFloat(source.data[offset + 2]);
+  return red * 0.2126 + green * 0.7152 + blue * 0.0722;
+}
+
+function createVisibleEnvironmentToneStats(source, dimensions, cameraRig) {
+  if (!source?.data || !drawEnvironment) return null;
+  const aspect = dimensions.width / dimensions.height;
+  const tanHalfFov = Math.tan(cameraFov / 2);
+  const elements = cameraRig.camera.matrixWorld.elements;
+  const right = [elements[0], elements[1], elements[2]];
+  const up = [elements[4], elements[5], elements[6]];
+  const forward = [-elements[8], -elements[9], -elements[10]];
+  const luminanceValues = [];
+
+  for (let row = 0; row < environmentToneGridRows; row++) {
+    const ndcY = -1 + (row + 0.5) * 2 / environmentToneGridRows;
+    for (let column = 0; column < environmentToneGridColumns; column++) {
+      const ndcX = -1 + (column + 0.5) * 2 / environmentToneGridColumns;
+      const direction = [
+        forward[0] + right[0] * ndcX * aspect * tanHalfFov + up[0] * ndcY * tanHalfFov,
+        forward[1] + right[1] * ndcX * aspect * tanHalfFov + up[1] * ndcY * tanHalfFov,
+        forward[2] + right[2] * ndcX * aspect * tanHalfFov + up[2] * ndcY * tanHalfFov,
+      ];
+      const luminance = sampleEnvironmentLuminance(source, direction);
+      if (Number.isFinite(luminance) && luminance > 0) {
+        luminanceValues.push(luminance);
+      }
+    }
+  }
+
+  return createLuminanceStats(luminanceValues);
 }
 
 function getEnvironmentBackgroundExposure() {
@@ -2369,8 +2401,19 @@ function updateEnvironmentToneMetric() {
 
   setMetric(
     'environmentTone',
-    `adaptive ${formatToneValue(getEnvironmentBackgroundExposure())}x / p95 ${formatToneValue(activeEnvironmentToneStats.p95)}`,
+    `adaptive ${formatToneValue(getEnvironmentBackgroundExposure())}x / view p95 ${formatToneValue(activeEnvironmentToneStats.p95)}`,
   );
+}
+
+function updateEnvironmentToneForFrame(dimensions, cameraRig, now = performance.now()) {
+  if (adaptiveEnvironmentToneEnabled && drawEnvironment) {
+    activeEnvironmentToneStats = createVisibleEnvironmentToneStats(activeEnvironmentToneSource, dimensions, cameraRig);
+  }
+
+  if (now - environmentToneLastMetricTime > 250) {
+    environmentToneLastMetricTime = now;
+    updateEnvironmentToneMetric();
+  }
 }
 
 function sanitizeVector(value, fallback) {
@@ -2626,7 +2669,7 @@ function createHdrTexture(device, label, hdr, options = {}) {
 
 function createPlaceholderEnvironmentTextures(device) {
   return {
-    environmentToneStats: null,
+    environmentToneSource: null,
     envIrradianceTexture: createPlaceholderTexture(device, 'MaterialX env irradiance placeholder', [0.62, 0.66, 0.68, 1]),
     envRadianceMipCount: 1,
     envRadianceTexture: createPlaceholderTexture(device, 'MaterialX env radiance placeholder', [0.32, 0.36, 0.42, 1]),
@@ -2644,7 +2687,6 @@ async function createEnvironmentTextures(device, environmentPath = environmentFi
       loadHdrTexture(environmentAssets.radiance),
       loadHdrTexture(environmentAssets.irradiance),
     ]);
-    const environmentToneStats = createEnvironmentToneStats(radiance);
     const envIrradiance = createHdrTexture(device, 'MaterialX env irradiance HDR', irradiance);
     const envRadiance = createHdrTexture(device, 'MaterialX env radiance HDR', radiance, { generateMipmaps: true });
 
@@ -2653,7 +2695,7 @@ async function createEnvironmentTextures(device, environmentPath = environmentFi
     recordDuration('environmentLoad', start);
 
     return {
-      environmentToneStats,
+      environmentToneSource: radiance,
       envIrradianceTexture: envIrradiance.texture,
       envRadianceMipCount: envRadiance.mipLevelCount,
       envRadianceTexture: envRadiance.texture,
@@ -4112,7 +4154,8 @@ async function main() {
   recordDuration('modelLoad', meshStart);
   setMetric('mesh', `${geometry.indices.length / 3} triangles`);
   let environmentTextures = await createEnvironmentTextures(device);
-  activeEnvironmentToneStats = environmentTextures.environmentToneStats;
+  activeEnvironmentToneSource = environmentTextures.environmentToneSource;
+  activeEnvironmentToneStats = null;
   await applyEnvironmentLightRig(environmentFilename);
 
   const privateVertexData = new Float32Array(privateVertexFloatCount);
@@ -4182,7 +4225,8 @@ async function main() {
 
     environmentFilename = environmentPath;
     environmentTextures = nextTextures;
-    activeEnvironmentToneStats = nextTextures.environmentToneStats;
+    activeEnvironmentToneSource = nextTextures.environmentToneSource;
+    activeEnvironmentToneStats = null;
     Object.assign(bindGroupResources, environmentTextures);
     bindGroup = await createBindGroupForActiveMaterial(pipeline, activeShaderMode, activeMaterialId);
     environmentBackgroundBindGroup = createEnvironmentBackgroundBindGroup(device, environmentBackgroundPipeline, bindGroupResources);
@@ -4310,6 +4354,7 @@ async function main() {
 
   function render(now) {
     writeFrameUniforms(privateVertexData, privatePixelData, dimensions, cameraRig, environmentTextures.envRadianceMipCount);
+    updateEnvironmentToneForFrame(dimensions, cameraRig, now);
     writeEnvironmentBackgroundUniforms(environmentBackgroundData, dimensions, cameraRig);
     device.queue.writeBuffer(privateVertexBuffer, 0, privateVertexData);
     device.queue.writeBuffer(privatePixelBuffer, 0, privatePixelData.bytes);
