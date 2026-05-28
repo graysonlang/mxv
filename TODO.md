@@ -11,6 +11,12 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
   - Current shape: `/webgpu-direct.html` renders the MaterialX shaderball with a direct WebGPU pipeline, Three.js orbit controls, generated sample material values, generated vertex-stage contract validation, MaterialX-shaped public/private/light uniform bindings, HDR environment textures, non-environment texture bindings for tiled wood and tiled brass, and a default Naga-translated generated WGSL pixel path.
   - Current recommendation: Naga-translated WebGPU is the primary direct viewer path; the hand-authored bridge remains a diagnostic scaffold, and WebGL remains the fallback for unsupported systems.
 
+- [ ] Kick off the direct WebGPU Material Lab UI.
+  - Phase 1: expose a renderer-neutral material property model and a direct WebGPU adapter that edits generated `PublicUniforms_pixel` values live with uniform-buffer uploads.
+  - Phase 2: decorate each property affordance with capability state (`live`, `reload`, `readonly`, `unsupported`) so WebGPU and WebGL can share the same material vocabulary without pretending every renderer supports the same edit path.
+  - Phase 3: add a WebGL fallback adapter that can at least inspect loaded MaterialX values, then mark reload-only or unsupported edits honestly.
+  - Phase 4: persist edited material state in a shareable URL and add copy/export paths for edited MaterialX XML once the live edit surface is useful.
+
 ## Done
 
 - [x] Split the MaterialX JavaScript/WASM runtime into the sibling `../mx` package and consume it from this repo as `@graysonlang/mx`.
@@ -62,6 +68,11 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 
 ## In Progress
 
+- [ ] Direct WebGPU Material Lab properties.
+  - Status: starting with a direct WebGPU-first properties panel backed by generated public uniform metadata.
+  - First useful cut: support live scalar, color, and boolean edits for public uniforms already present in the active generated sample layout; show non-live fields as decorated unsupported/readonly affordances.
+  - Later: lift the adapter boundary into shared UI code so WebGL fallback can display the same property schema with renderer-specific support status.
+
 - [ ] Phase 3 direct WebGPU bridge.
   - Status: binding contract is active; generated fragment source is validated for the expected standard-surface shape; the browser WGSL fragment path now mirrors the generated outer `main()` to standard-surface call flow; a narrow custom translator compiles a first helper-function slice; Naga translates the full emitted shader fixtures offline; Chrome accepts the generated Naga vertex and pixel modules after the bool-uniform and subsurface-radius pre-passes; all nine translated samples compile as render pipelines with the direct WebGPU bind group layout; the direct viewer now defaults to the Naga-generated WGSL path with display encoding, Three.js orbit controls, runtime environment sample controls, mipmapped HDR radiance lookups, generated-style directional light data, and texture/sampler bindings for tiled wood and tiled brass.
   - Next decision: treat `shader=bridge` as a contract diagnostic path while WebGPU/Naga moves toward capability routing and parity testing.
@@ -72,27 +83,33 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 
 ## Next Tasks
 
-1. Add capability routing between WebGPU/Naga and WebGL.
+1. Wire the first direct WebGPU Material Lab properties panel.
+   - Derive fields from generated `PublicUniforms_pixel` metadata where available.
+   - Group common Standard Surface controls into practical sections.
+   - Apply live edits through the existing direct WebGPU public uniform buffer without shader regeneration.
+   - Keep texture graph and MaterialX document editing out of the first pass.
+
+2. Add capability routing between WebGPU/Naga and WebGL.
    - Probe `navigator.gpu`, adapter/device creation, and known shader pipeline compilation.
    - Route supported systems to WebGPU/Naga.
    - Route unsupported or failing systems to the existing WebGL viewer.
    - Surface a clear status if Naga fixtures are missing and fall back to WebGL or bridge only by explicit routing.
 
-2. Capture a small baseline matrix for the representative generated samples in the WebGL viewer and `/webgpu-direct.html`.
+3. Capture a small baseline matrix for the representative generated samples in the WebGL viewer and `/webgpu-direct.html`.
    - Include first visible frame, steady FPS, frame-time average/p95, material switch CPU time, and material switch GPU completion time.
 
-3. Continue visual/performance evaluation of the Naga path.
+4. Continue visual/performance evaluation of the Naga path.
    - Use car paint, brushed metal, pearl, coated fabric, tiled wood, and tiled brass as the main visual checks; keep emissive plastic as emission coverage, not a parity reference.
    - Compare Naga against the desktop viewer with the same material, shaderball mesh, `san_giuseppe_bridge_split` environment/light rig, `envSamples=16`, `envIntensity=1`, `directLight=1`, matched environment-background visibility, and shadows disabled.
    - Re-run the same views with `directLight=0` to isolate image-based lighting from direct-light contribution.
    - Measure steady FPS for complex materials at `envSamples=4`, `8`, and `16`.
    - If it holds, keep the build-time Naga wrapper path first and consider a WASM wrapper later.
 
-4. Improve environment parity when visual comparison becomes important.
+5. Improve environment parity when visual comparison becomes important.
    - Continue from the loaded HDR radiance/irradiance textures and generated radiance mips toward viewer-equivalent environment prefiltering and intensity.
    - Keep this behind the performance/fidelity evaluation so it does not block shader-contract learning.
 
-5. Expand verification once the Naga path grows.
+6. Expand verification once the Naga path grows.
    - Add assertions for private uniform contract text, shader notes, WebGPU validation errors, texture-load status, camera-control smoke coverage, and optionally a simple screenshot pixel sanity check.
 
 ## Parking Lot

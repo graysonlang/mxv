@@ -32,6 +32,7 @@
     }
 
     .panel,
+    .properties-panel,
     .hud {
       position: fixed;
       z-index: 5;
@@ -50,6 +51,67 @@
       width: 300px;
     }
 
+    .properties-panel {
+      background: rgba(13, 17, 16, 0.78);
+      border: 1px solid rgba(194, 211, 203, 0.18);
+      bottom: 12px;
+      box-sizing: border-box;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      max-width: min(380px, calc(100vw - 24px));
+      right: 12px;
+      top: 12px;
+      width: 340px;
+    }
+
+    .properties-header {
+      border-bottom: 1px solid rgba(194, 211, 203, 0.14);
+      display: grid;
+      gap: 4px;
+      padding: 10px;
+    }
+
+    .panel-title {
+      color: #f0eee7;
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 0;
+      line-height: 1.2;
+      margin: 0;
+      text-transform: uppercase;
+    }
+
+    .properties-summary {
+      color: #a8b5ae;
+      font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .properties-list {
+      display: grid;
+      gap: 13px;
+      min-height: 0;
+      overflow: auto;
+      padding: 10px;
+    }
+
+    .property-group {
+      display: grid;
+      gap: 7px;
+    }
+
+    .property-group-title {
+      color: #d6d8ce;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0;
+      line-height: 1.2;
+      margin: 0;
+      text-transform: uppercase;
+    }
+
     .metric-row {
       align-items: baseline;
       display: grid;
@@ -66,12 +128,31 @@
       min-height: 30px;
     }
 
-    .label {
+    .property-row {
+      align-items: center;
+      display: grid;
+      gap: 8px;
+      grid-template-columns: minmax(92px, 1fr) minmax(0, 1.25fr) 46px;
+      min-height: 30px;
+    }
+
+    .property-row[data-status="readonly"],
+    .property-row[data-status="unsupported"] {
+      opacity: 0.62;
+    }
+
+    .label,
+    .property-label {
       color: #a8b5ae;
       font-size: 12px;
       font-weight: 700;
       letter-spacing: 0;
       text-transform: uppercase;
+    }
+
+    .property-label {
+      overflow-wrap: anywhere;
+      text-transform: none;
     }
 
     select {
@@ -101,6 +182,28 @@
       width: 100%;
     }
 
+    input[type="range"] {
+      accent-color: #7edfe1;
+      min-width: 0;
+      width: 100%;
+    }
+
+    input[type="range"]:disabled {
+      accent-color: #65716c;
+    }
+
+    input[type="color"] {
+      appearance: none;
+      background: #111715;
+      border: 1px solid #43504b;
+      border-radius: 6px;
+      box-sizing: border-box;
+      height: 30px;
+      min-width: 0;
+      padding: 0;
+      width: 100%;
+    }
+
     input[type="number"]::-webkit-inner-spin-button,
     input[type="number"]::-webkit-outer-spin-button {
       opacity: 1;
@@ -117,6 +220,42 @@
       align-items: center;
       display: flex;
       min-height: 30px;
+    }
+
+    .property-control {
+      align-items: center;
+      display: grid;
+      gap: 7px;
+      grid-template-columns: minmax(0, 1fr) 36px;
+      min-width: 0;
+    }
+
+    .property-control output {
+      color: #f0eee7;
+      font: 11px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      text-align: right;
+    }
+
+    .support-pill {
+      border: 1px solid rgba(194, 211, 203, 0.20);
+      border-radius: 999px;
+      color: #d6d8ce;
+      font: 700 9px/1 ui-sans-serif, system-ui, sans-serif;
+      justify-self: end;
+      min-width: 34px;
+      padding: 4px 5px;
+      text-align: center;
+      text-transform: uppercase;
+    }
+
+    .support-pill.is-live {
+      border-color: rgba(126, 223, 225, 0.45);
+      color: #a6f4ef;
+    }
+
+    .support-pill.is-readonly,
+    .support-pill.is-unsupported {
+      color: #8d9a94;
     }
 
     .action-button {
@@ -189,6 +328,19 @@
       .panel {
         right: 12px;
         width: auto;
+      }
+
+      .properties-panel {
+        bottom: 58px;
+        left: 12px;
+        max-height: 42vh;
+        right: 12px;
+        top: auto;
+        width: auto;
+      }
+
+      .property-row {
+        grid-template-columns: minmax(76px, 0.7fr) minmax(0, 1fr) 44px;
       }
 
       .hud {
@@ -372,6 +524,13 @@
         <span class="label">Frame p95</span>
         <span class="value" data-metric="frameP95">-</span>
       </div>
+    </aside>
+    <aside class="properties-panel" aria-label="Material properties">
+      <div class="properties-header">
+        <h1 class="panel-title">Material Properties</h1>
+        <div class="properties-summary" data-material-properties-summary>Waiting for shadergen</div>
+      </div>
+      <div class="properties-list" data-material-properties></div>
     </aside>
     <div class="hud">
       <div class="status">

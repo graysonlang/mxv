@@ -7,6 +7,12 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { translateMaterialXFragmentGlsl } from '../src/materialx-glsl-translator.js';
 import { materialSamples as materialSampleSources } from '../src/materialx-samples.js';
+import {
+  createMaterialPropertyModel,
+  renderMaterialPropertiesPanel,
+  setMaterialPropertyValue,
+  summarizeMaterialPropertySupport,
+} from './material-properties.js';
 import { createNagaTranslator, nagaVersion } from '@graysonlang/naga';
 
 export function getFilePaths() {
@@ -2745,6 +2751,48 @@ function bindDirectLightControls() {
   });
 }
 
+function bindMaterialPropertiesPanel(device, publicUniformBuffer, publicUniformData) {
+  const root = document.querySelector('[data-material-properties]');
+  const summary = document.querySelector('[data-material-properties-summary]');
+  if (!root) {
+    return {
+      refresh: () => {},
+    };
+  }
+
+  const refresh = () => {
+    const sample = materialSamples[activeMaterialId] || materialSamples.standard;
+    const model = createMaterialPropertyModel({
+      sample,
+      shaderMode: activeShaderMode,
+    });
+    renderMaterialPropertiesPanel(root, model, {
+      onChange: (property, value) => {
+        if (property.status !== 'live') return;
+
+        const activeSample = materialSamples[activeMaterialId] || materialSamples.standard;
+        if (!setMaterialPropertyValue(activeSample, property, value, activeShaderMode)) return;
+
+        const uploadStart = performance.now();
+        const writtenSample = writeMaterialUniforms(publicUniformData, activeMaterialId, {
+          shaderMode: activeShaderMode,
+        });
+        device.queue.writeBuffer(publicUniformBuffer, 0, publicUniformData.bytes);
+        setMetric('materialUpload', formatDuration(performance.now() - uploadStart));
+        setMetric('material', `${writtenSample.label} (${writtenSample.source}, edited)`);
+      },
+    });
+
+    if (summary) {
+      const shaderLabel = shaderModeLabels[activeShaderMode] || activeShaderMode;
+      summary.textContent = `${model.sampleLabel} / ${shaderLabel} / ${summarizeMaterialPropertySupport(model)}`;
+    }
+  };
+
+  refresh();
+  return { refresh };
+}
+
 async function fetchTextResource(url, label) {
   const response = await fetch(url);
   if (!response.ok) {
@@ -3182,9 +3230,14 @@ async function main() {
     bindGroup = nextBindGroup;
     setStatus('Ready');
   };
-  bindShaderModeSelect(() => applyPipelineForShaderMode(activeMaterialId, { requireShadergen: activeShaderMode === 'naga' }));
+  const materialPropertiesControl = bindMaterialPropertiesPanel(device, publicUniformBuffer, publicUniformData);
+  bindShaderModeSelect(() => {
+    materialPropertiesControl.refresh();
+    return applyPipelineForShaderMode(activeMaterialId, { requireShadergen: activeShaderMode === 'naga' });
+  });
   const materialControl = bindMaterialSelect(device, publicUniformBuffer, publicUniformData, {
     onMaterialApplied: (materialId, sample, options = {}) => {
+      materialPropertiesControl.refresh();
       if (activeShaderMode !== 'naga' || sample.source !== 'shadergen') return null;
       return applyPipelineForShaderMode(materialId, {
         requireShadergen: true,
