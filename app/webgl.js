@@ -274,6 +274,16 @@ function parseMaterialPortsFromXml(xml) {
   return ports;
 }
 
+function getWebglFallbackLabel() {
+  if (queryParams.get('fallback') !== 'direct-webgpu') return 'WebGL fallback';
+  const reason = queryParams.get('fallbackReason');
+  return reason ? `WebGL fallback: ${reason}` : 'WebGL fallback from Direct WebGPU';
+}
+
+function getWebglReadyLabel() {
+  return queryParams.get('fallback') === 'direct-webgpu' ? getWebglFallbackLabel() : 'Ready';
+}
+
 async function refreshWebglMaterialProperties(file) {
   const root = document.querySelector('[data-material-properties]');
   const summary = document.querySelector('[data-material-properties-summary]');
@@ -294,7 +304,7 @@ async function refreshWebglMaterialProperties(file) {
     });
     renderMaterialPropertiesPanel(root, model);
     if (summary) {
-      summary.textContent = `${model.sampleLabel} / WebGL fallback / ${summarizeMaterialPropertySupport(model)}`;
+      summary.textContent = `${model.sampleLabel} / ${getWebglFallbackLabel()} / ${summarizeMaterialPropertySupport(model)}`;
     }
   } catch (error) {
     console.warn('Could not inspect WebGL MaterialX properties.', error);
@@ -858,7 +868,7 @@ async function initializeViewer() {
   });
 
   THREE.Cache.enabled = true;
-  setStatus(`Ready: ${prettyName(materialFilename)} on ${prettyName(geometryFilename)}`);
+  setStatus(`${getWebglReadyLabel()}: ${prettyName(materialFilename)} on ${prettyName(geometryFilename)}`);
   animate();
 }
 

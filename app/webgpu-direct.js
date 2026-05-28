@@ -39,8 +39,15 @@ const shaderModeLabels = {
   bridge: 'Bridge',
   naga: 'Naga WGSL',
 };
+const rendererModeLabels = {
+  auto: 'Auto',
+  direct: 'Direct WebGPU',
+  webgl: 'WebGL fallback',
+};
 const requestedShaderMode = queryParams.get('shader') || queryParams.get('shaderMode');
 let activeShaderMode = Object.hasOwn(shaderModeLabels, requestedShaderMode) ? requestedShaderMode : 'naga';
+const requestedRendererMode = (queryParams.get('renderer') || queryParams.get('renderMode') || 'auto').toLowerCase();
+let activeRendererMode = Object.hasOwn(rendererModeLabels, requestedRendererMode) ? requestedRendererMode : 'auto';
 const requestedMaterialSettings = queryParams.get('settings');
 const defaultEnvRadianceSamples = Number(queryParams.get('envSamples') || queryParams.get('samples') || 4);
 const defaultEnvLightIntensity = Number(queryParams.get('envIntensity') || 1);
@@ -73,6 +80,7 @@ const materialXBoolUniformWarning = 'WGSL does not allow boolean types to be sto
 const materialXKnownWarnings = new Set();
 let nagaTranslatorPromise;
 const webGpuErrors = [];
+let fallbackRouting = false;
 if (typeof window !== 'undefined') {
   window.__mxvWebGpuErrors = webGpuErrors;
 }
@@ -638,6 +646,74 @@ function setStatus(text) {
 
 function setMetric(name, value) {
   setText(`[data-metric="${name}"]`, value);
+}
+
+function isWebGpuProbeAvailable() {
+  return typeof navigator !== 'undefined' && Boolean(navigator.gpu);
+}
+
+function describeFallbackStatus(detail = '') {
+  const probeStatus = isWebGpuProbeAvailable() ? 'WebGPU probe available' : 'WebGPU probe missing';
+  if (activeRendererMode === 'webgl') {
+    return detail || `forced WebGL fallback / ${probeStatus}`;
+  }
+  if (activeRendererMode === 'direct') {
+    return detail || `disabled by Direct WebGPU override / ${probeStatus}`;
+  }
+  return detail || `auto route on startup failure / ${probeStatus}`;
+}
+
+function updateFallbackStatus(detail) {
+  setMetric('fallback', describeFallbackStatus(detail));
+}
+
+function buildWebGlFallbackUrl(reason = 'manual') {
+  const fallbackUrl = new URL('./webgl.html', document.location.href);
+  const currentParams = new URLSearchParams(document.location.search);
+  const material = currentParams.get('material') || currentParams.get('materials') || currentParams.get('file');
+  const geometry = currentParams.get('model') || currentParams.get('geom');
+  const environment = currentParams.get('environment') || currentParams.get('env');
+
+  if (material) fallbackUrl.searchParams.set('material', material);
+  if (geometry) fallbackUrl.searchParams.set('model', geometry);
+  if (environment) fallbackUrl.searchParams.set('environment', environment);
+  fallbackUrl.searchParams.set('fallback', 'direct-webgpu');
+  fallbackUrl.searchParams.set('fallbackReason', reason);
+  return fallbackUrl;
+}
+
+function routeToWebGlFallback(reason = 'manual') {
+  if (fallbackRouting) return true;
+  fallbackRouting = true;
+  const reasonText = reason?.message || String(reason || 'manual');
+  updateFallbackStatus(`opening WebGL fallback / ${reasonText}`);
+  setStatus('Opening WebGL fallback');
+
+  if (window.parent && window.parent !== window) {
+    try {
+      window.parent.location.hash = '#webgl';
+      return true;
+    } catch (error) {
+      console.warn('Could not switch parent viewer mode, navigating directly.', error);
+    }
+  }
+
+  window.location.assign(buildWebGlFallbackUrl(reasonText));
+  return true;
+}
+
+function handleDirectStartupError(error) {
+  console.error(error);
+  if (activeRendererMode === 'auto') {
+    routeToWebGlFallback(error?.message || 'Direct WebGPU startup failed');
+    return;
+  }
+
+  setStatus('Failed');
+  setMetric('renderer', error?.message || String(error));
+  updateFallbackStatus(activeRendererMode === 'direct'
+    ? 'fallback disabled / Direct WebGPU forced'
+    : 'startup failed');
 }
 
 function recordWebGpuError(scope, error) {
@@ -2313,6 +2389,9 @@ async function createDevice() {
 
   const device = await adapter.requestDevice();
   setMetric('renderer', 'Direct WebGPU');
+  updateFallbackStatus(activeRendererMode === 'auto'
+    ? 'Direct WebGPU active / WebGL fallback armed'
+    : 'Direct WebGPU forced / WebGL fallback disabled');
   setMetric('adapter', adapter.info?.device || adapter.info?.description || adapter.info?.vendor || 'available');
   recordDuration('deviceInit', start);
   return { adapter, device };
@@ -3079,6 +3158,39 @@ function bindShaderModeSelect(onModeChanged) {
         setMetric('shaderNotes', error?.message || String(error));
       });
     }
+  });
+
+  refresh();
+  return {
+    refresh,
+  };
+}
+
+function bindRendererModeSelect() {
+  const select = document.getElementById('renderer-mode');
+  if (!select) {
+    updateFallbackStatus();
+    return {
+      refresh: () => {},
+    };
+  }
+
+  const refresh = () => {
+    select.value = activeRendererMode;
+    updateFallbackStatus();
+  };
+
+  select.addEventListener('change', () => {
+    activeRendererMode = Object.hasOwn(rendererModeLabels, select.value) ? select.value : 'auto';
+    if (activeRendererMode === 'webgl') {
+      routeToWebGlFallback('manual override');
+      return;
+    }
+
+    updateQueryParam('renderer', activeRendererMode);
+    updateFallbackStatus(activeRendererMode === 'direct'
+      ? 'fallback disabled / Direct WebGPU forced'
+      : undefined);
   });
 
   refresh();
@@ -3879,9 +3991,15 @@ async function main() {
 }
 
 window.addEventListener('load', () => {
-  main().catch((error) => {
-    console.error(error);
-    setStatus('Failed');
-    setMetric('renderer', error?.message || String(error));
-  });
+  bindRendererModeSelect();
+  if (activeRendererMode === 'webgl') {
+    routeToWebGlFallback('manual override');
+    return;
+  }
+  if (activeRendererMode === 'auto' && !isWebGpuProbeAvailable()) {
+    routeToWebGlFallback('WebGPU unavailable');
+    return;
+  }
+
+  main().catch(handleDirectStartupError);
 });

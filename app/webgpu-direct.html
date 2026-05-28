@@ -391,6 +391,14 @@
         </select>
       </div>
       <div class="control-row">
+        <label class="label" for="renderer-mode">Renderer</label>
+        <select id="renderer-mode" name="renderer-mode">
+          <option value="auto">Auto</option>
+          <option value="direct">Direct WebGPU</option>
+          <option value="webgl">WebGL fallback</option>
+        </select>
+      </div>
+      <div class="control-row">
         <label class="label" for="env-radiance-samples">Env Samples</label>
         <select id="env-radiance-samples" name="env-radiance-samples">
           <option value="0">0</option>
@@ -424,6 +432,10 @@
       <div class="metric-row">
         <span class="label">Renderer</span>
         <span class="value" data-metric="renderer">-</span>
+      </div>
+      <div class="metric-row">
+        <span class="label">Fallback</span>
+        <span class="value" data-metric="fallback">-</span>
       </div>
       <div class="metric-row">
         <span class="label">Adapter</span>

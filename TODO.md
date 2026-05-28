@@ -84,6 +84,7 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 ## Next Tasks
 
 1. Add capability routing between WebGPU/Naga and WebGL.
+   - Status: direct mode now exposes Auto, forced Direct WebGPU, and forced WebGL fallback controls; Auto routes startup WebGPU failures to the WebGL viewer.
    - Probe `navigator.gpu`, adapter/device creation, and known shader pipeline compilation.
    - Route supported systems to WebGPU/Naga.
    - Route unsupported or failing systems to the existing WebGL viewer.
