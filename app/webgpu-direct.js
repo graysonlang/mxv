@@ -77,6 +77,7 @@ let activeDirectLight = {
   intensity: 2.52776,
   type: 1,
 };
+let activeLightRigPath = '';
 const materialXBoolUniformWarning = 'WGSL does not allow boolean types to be stored in uniform or storage address spaces.';
 const materialXKnownWarnings = new Set();
 let nagaTranslatorPromise;
@@ -1776,7 +1777,7 @@ async function initializeMaterialXShaderSupport(materialControl, pipelineControl
     materialSamples = Object.fromEntries(generatedEntries);
     resetMaterialSettingsDefaults(materialSamples);
     const activeSample = materialSamples[activeMaterialId] || generatedEntries[0]?.[1];
-    if (activeSample?.lightData?.[0]) {
+    if (activeSample?.lightData?.[0] && !activeLightRigPath) {
       activeDirectLight = activeSample.lightData[0];
       pipelineControl.updateLightData?.(activeDirectLight);
       setMetric('directLight', describeDirectLight(activeDirectLight));
@@ -2185,6 +2186,10 @@ function getEnvironmentIrradiancePath(environmentPath) {
   return environmentPath.replace('/Lights/', '/Lights/irradiance/');
 }
 
+function getEnvironmentLightRigPath(environmentPath) {
+  return environmentPath.replace(/\.hdr$/i, '.mtlx');
+}
+
 function isSplitEnvironmentPath(environmentPath) {
   return /_split\.hdr$/i.test(environmentPath);
 }
@@ -2234,14 +2239,87 @@ function resolveEnvironmentPath(paths, requested, fallback) {
 
 function getEnvironmentAssets(environmentPath) {
   const irradiancePath = getEnvironmentIrradiancePath(environmentPath);
+  const lightRigPath = getEnvironmentLightRigPath(environmentPath);
   const fallbackIrradiancePath = getEnvironmentIrradiancePath(defaultEnvironment);
 
   return {
     irradiance: materialXResourcePaths.length && !materialXResourcePaths.includes(irradiancePath)
       ? fallbackIrradiancePath
       : irradiancePath,
+    lightRig: materialXResourcePaths.length && !materialXResourcePaths.includes(lightRigPath)
+      ? ''
+      : lightRigPath,
     radiance: environmentPath,
   };
+}
+
+function sanitizeVector(value, fallback) {
+  if (!Array.isArray(value)) return fallback;
+  const vector = fallback.map((component, index) => {
+    const number = Number(value[index]);
+    return Number.isFinite(number) ? number : component;
+  });
+  return vector;
+}
+
+function parseLightRigXml(xml, lightRigPath = '') {
+  const document = new DOMParser().parseFromString(xml, 'application/xml');
+  const parseError = document.querySelector('parsererror');
+  if (parseError) {
+    throw new Error(`Could not parse ${lightRigPath || 'light rig'}.`);
+  }
+
+  const light = [...document.querySelectorAll('[type="lightshader"]')][0];
+  if (!light) {
+    throw new Error(`${lightRigPath || 'Light rig'} does not define a light shader.`);
+  }
+
+  const inputValue = name => light.querySelector(`input[name="${name}"]`)?.getAttribute('value');
+  const intensity = Number(parseMaterialValue('float', inputValue('intensity')));
+  return {
+    color: sanitizeVector(parseMaterialValue('color3', inputValue('color')), [1, 1, 1]),
+    direction: sanitizeVector(parseMaterialValue('vector3', inputValue('direction')), [0, -1, 0]),
+    intensity: Number.isFinite(intensity) ? intensity : 1,
+    type: 1,
+  };
+}
+
+async function loadEnvironmentLightRig(environmentPath) {
+  const { lightRig } = getEnvironmentAssets(environmentPath);
+  if (!lightRig) return null;
+
+  const response = await fetch(lightRig);
+  if (!response.ok) {
+    throw new Error(`${response.status} ${response.statusText}: ${lightRig}`);
+  }
+
+  return {
+    light: parseLightRigXml(await response.text(), lightRig),
+    path: lightRig,
+  };
+}
+
+async function applyEnvironmentLightRig(environmentPath, controls = {}) {
+  let lightRig = null;
+  try {
+    lightRig = await loadEnvironmentLightRig(environmentPath);
+  } catch (error) {
+    console.warn(`Could not load light rig for ${environmentPath}.`, error);
+    setMetric('directLight', `${describeDirectLight()} / rig unavailable`);
+    return null;
+  }
+
+  if (!lightRig?.light) {
+    activeLightRigPath = '';
+    setMetric('directLight', `${describeDirectLight()} / no rig`);
+    return null;
+  }
+
+  activeDirectLight = lightRig.light;
+  activeLightRigPath = lightRig.path;
+  controls.writeLight?.(activeDirectLight);
+  setMetric('directLight', describeDirectLight(activeDirectLight));
+  return lightRig;
 }
 
 async function initializeAssetManifest() {
@@ -3897,6 +3975,7 @@ async function main() {
   recordDuration('modelLoad', meshStart);
   setMetric('mesh', `${geometry.indices.length / 3} triangles`);
   let environmentTextures = await createEnvironmentTextures(device);
+  await applyEnvironmentLightRig(environmentFilename);
 
   const privateVertexData = new Float32Array(privateVertexFloatCount);
   const privatePixelData = createPrivatePixelUniformData();
@@ -3968,6 +4047,12 @@ async function main() {
     Object.assign(bindGroupResources, environmentTextures);
     bindGroup = await createBindGroupForActiveMaterial(pipeline, activeShaderMode, activeMaterialId);
     environmentBackgroundBindGroup = createEnvironmentBackgroundBindGroup(device, environmentBackgroundPipeline, bindGroupResources);
+    await applyEnvironmentLightRig(environmentFilename, {
+      writeLight: (light) => {
+        writeLightUniforms(lightData, light);
+        device.queue.writeBuffer(lightDataBuffer, 0, lightData.bytes);
+      },
+    });
     updateQueryParam('environment', prettyAssetName(environmentFilename));
     setStatus('Ready');
   });
