@@ -75,6 +75,9 @@ const lightDataByteLength = 48;
 const vertexStrideFloats = 11;
 const environmentToneGridColumns = 11;
 const environmentToneGridRows = 7;
+const environmentToneMapWidth = 128;
+const environmentToneMapHeight = 64;
+const environmentToneBlurPasses = 2;
 const environmentToneTargetP95 = 0.72;
 const environmentToneMaxExposure = 32;
 let activeDirectLight = {
@@ -2322,6 +2325,115 @@ function createLuminanceStats(luminanceValues) {
   };
 }
 
+function getHdrPixelLuminance(hdr, x, y) {
+  const offset = (y * hdr.width + x) * 4;
+  const red = halfToFloat(hdr.data[offset]);
+  const green = halfToFloat(hdr.data[offset + 1]);
+  const blue = halfToFloat(hdr.data[offset + 2]);
+  const luminance = red * 0.2126 + green * 0.7152 + blue * 0.0722;
+  return Number.isFinite(luminance) && luminance > 0 ? luminance : 0;
+}
+
+function createDownsampledEnvironmentToneMap(hdr) {
+  const width = Math.min(environmentToneMapWidth, hdr.width);
+  const height = Math.min(environmentToneMapHeight, hdr.height);
+  const luminance = new Float32Array(width * height);
+
+  for (let y = 0; y < height; y++) {
+    const sourceYStart = Math.floor(y * hdr.height / height);
+    const sourceYEnd = Math.max(sourceYStart + 1, Math.floor((y + 1) * hdr.height / height));
+    for (let x = 0; x < width; x++) {
+      const sourceXStart = Math.floor(x * hdr.width / width);
+      const sourceXEnd = Math.max(sourceXStart + 1, Math.floor((x + 1) * hdr.width / width));
+      let sum = 0;
+      let count = 0;
+
+      for (let sourceY = sourceYStart; sourceY < sourceYEnd; sourceY++) {
+        const clampedY = Math.min(hdr.height - 1, sourceY);
+        for (let sourceX = sourceXStart; sourceX < sourceXEnd; sourceX++) {
+          sum += getHdrPixelLuminance(hdr, Math.min(hdr.width - 1, sourceX), clampedY);
+          count++;
+        }
+      }
+
+      luminance[y * width + x] = count ? sum / count : 0;
+    }
+  }
+
+  return {
+    data: luminance,
+    height,
+    width,
+  };
+}
+
+function blurEnvironmentToneMap(source) {
+  const { height, width } = source;
+  const kernel = [1, 4, 6, 4, 1];
+  const kernelWeight = 16;
+  let current = source.data;
+  let horizontal = new Float32Array(current.length);
+  let vertical = new Float32Array(current.length);
+
+  for (let pass = 0; pass < environmentToneBlurPasses; pass++) {
+    for (let y = 0; y < height; y++) {
+      const rowOffset = y * width;
+      for (let x = 0; x < width; x++) {
+        let sum = 0;
+        for (let kernelIndex = 0; kernelIndex < kernel.length; kernelIndex++) {
+          const offset = kernelIndex - 2;
+          const sampleX = (x + offset + width) % width;
+          sum += current[rowOffset + sampleX] * kernel[kernelIndex];
+        }
+        horizontal[rowOffset + x] = sum / kernelWeight;
+      }
+    }
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        let sum = 0;
+        for (let kernelIndex = 0; kernelIndex < kernel.length; kernelIndex++) {
+          const offset = kernelIndex - 2;
+          const sampleY = Math.min(height - 1, Math.max(0, y + offset));
+          sum += horizontal[sampleY * width + x] * kernel[kernelIndex];
+        }
+        vertical[y * width + x] = sum / kernelWeight;
+      }
+    }
+
+    current = vertical;
+    vertical = new Float32Array(current.length);
+  }
+
+  return {
+    data: current,
+    height,
+    width,
+  };
+}
+
+function createEnvironmentToneSource(hdr) {
+  return blurEnvironmentToneMap(createDownsampledEnvironmentToneMap(hdr));
+}
+
+function sampleToneMapBilinear(source, x, y) {
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const tx = x - x0;
+  const ty = y - y0;
+  const x1 = x0 + 1;
+  const y1 = y0 + 1;
+  const wrappedX0 = (x0 + source.width) % source.width;
+  const wrappedX1 = (x1 + source.width) % source.width;
+  const clampedY0 = Math.min(source.height - 1, Math.max(0, y0));
+  const clampedY1 = Math.min(source.height - 1, Math.max(0, y1));
+  const top = source.data[clampedY0 * source.width + wrappedX0] * (1 - tx)
+    + source.data[clampedY0 * source.width + wrappedX1] * tx;
+  const bottom = source.data[clampedY1 * source.width + wrappedX0] * (1 - tx)
+    + source.data[clampedY1 * source.width + wrappedX1] * tx;
+  return top * (1 - ty) + bottom * ty;
+}
+
 function sampleEnvironmentLuminance(source, direction) {
   if (!source?.data || !source.width || !source.height) return 0;
   const length = Math.hypot(direction[0], direction[1], direction[2]) || 1;
@@ -2331,13 +2443,11 @@ function sampleEnvironmentLuminance(source, direction) {
   const u = Math.atan2(x, -z) * 0.15915494309189535 + 0.5;
   const v = Math.acos(Math.min(1, Math.max(-1, y))) * 0.3183098861837907;
   const rotatedU = ((u + 0.5) % 1 + 1) % 1;
-  const texelX = Math.min(source.width - 1, Math.max(0, Math.floor(rotatedU * source.width)));
-  const texelY = Math.min(source.height - 1, Math.max(0, Math.floor(v * source.height)));
-  const offset = (texelY * source.width + texelX) * 4;
-  const red = halfToFloat(source.data[offset]);
-  const green = halfToFloat(source.data[offset + 1]);
-  const blue = halfToFloat(source.data[offset + 2]);
-  return red * 0.2126 + green * 0.7152 + blue * 0.0722;
+  return sampleToneMapBilinear(
+    source,
+    rotatedU * source.width - 0.5,
+    v * source.height - 0.5,
+  );
 }
 
 function createVisibleEnvironmentToneStats(source, dimensions, cameraRig) {
@@ -2401,7 +2511,7 @@ function updateEnvironmentToneMetric() {
 
   setMetric(
     'environmentTone',
-    `adaptive ${formatToneValue(getEnvironmentBackgroundExposure())}x / view p95 ${formatToneValue(activeEnvironmentToneStats.p95)}`,
+    `adaptive ${formatToneValue(getEnvironmentBackgroundExposure())}x / smooth view p95 ${formatToneValue(activeEnvironmentToneStats.p95)}`,
   );
 }
 
@@ -2695,7 +2805,7 @@ async function createEnvironmentTextures(device, environmentPath = environmentFi
     recordDuration('environmentLoad', start);
 
     return {
-      environmentToneSource: radiance,
+      environmentToneSource: createEnvironmentToneSource(radiance),
       envIrradianceTexture: envIrradiance.texture,
       envRadianceMipCount: envRadiance.mipLevelCount,
       envRadianceTexture: envRadiance.texture,
