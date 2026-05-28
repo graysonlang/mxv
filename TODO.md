@@ -11,11 +11,11 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
   - Current shape: `/webgpu-direct.html` renders the MaterialX shaderball with a direct WebGPU pipeline, Three.js orbit controls, generated sample material values, generated vertex-stage contract validation, MaterialX-shaped public/private/light uniform bindings, HDR environment textures, non-environment texture bindings for tiled wood and tiled brass, and a default Naga-translated generated WGSL pixel path.
   - Current recommendation: Naga-translated WebGPU is the primary direct viewer path; the hand-authored bridge remains a diagnostic scaffold, and WebGL remains the fallback for unsupported systems.
 
-- [ ] Kick off the direct WebGPU Material Lab UI.
-  - Phase 1: expose a renderer-neutral material property model and a direct WebGPU adapter that edits generated `PublicUniforms_pixel` values live with uniform-buffer uploads.
-  - Phase 2: decorate each property affordance with capability state (`live`, `reload`, `readonly`, `unsupported`) so WebGPU and WebGL can share the same material vocabulary without pretending every renderer supports the same edit path.
-  - Phase 3: add a WebGL fallback adapter that can at least inspect loaded MaterialX values, then mark reload-only or unsupported edits honestly.
-  - Phase 4: persist edited material state in a shareable URL and add copy/export paths for edited MaterialX XML once the live edit surface is useful.
+- [x] Kick off the direct WebGPU Material Lab UI.
+  - Phase 1: exposed a renderer-neutral material property model and a direct WebGPU adapter that edits generated `PublicUniforms_pixel` values live with uniform-buffer uploads.
+  - Phase 2: decorated each property affordance with capability state (`live`, `reload`, `readonly`, `unsupported`) so WebGPU and WebGL can share the same material vocabulary without pretending every renderer supports the same edit path.
+  - Phase 3: added a WebGL fallback adapter that inspects loaded MaterialX values, then marks reload-only or unsupported edits honestly.
+  - Phase 4: added dirty/default state, reset, URL-persisted settings, Save As JSON, and exported edited MaterialX XML.
 
 ## Done
 
@@ -65,13 +65,13 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 - [x] Add the upstream-style tiled-brass MaterialX sample as a second texture-backed coverage case for metallic coat and roughness textures.
 - [x] Make Naga the default shader path for `/webgpu-direct.html`, keeping `shader=bridge` as an explicit diagnostic mode.
 - [x] Replace the direct viewer's custom pointer controls with Three.js `OrbitControls` and pull the default shaderball framing farther back to better match the original viewer.
+- [x] Add the first Material Lab property workflow: live direct WebGPU editing, Save As/load/reset JSON settings, URL-persisted material settings, edited MaterialX export, capability badges, and a WebGL fallback inspection panel.
 
 ## In Progress
 
 - [ ] Direct WebGPU Material Lab properties.
-  - Status: starting with a direct WebGPU-first properties panel backed by generated public uniform metadata.
-  - First useful cut: support live scalar, color, and boolean edits for public uniforms already present in the active generated sample layout; show non-live fields as decorated unsupported/readonly affordances.
-  - Later: lift the adapter boundary into shared UI code so WebGL fallback can display the same property schema with renderer-specific support status.
+  - Status: first direct-WebGPU editing workflow is active, with generated public uniform metadata, dirty/default state, Save As/load/reset, URL settings persistence, MaterialX export, and a WebGL fallback inspection panel.
+  - Next useful cut: add texture/file inputs and graph-aware export rather than exporting only public uniform values.
 
 - [ ] Phase 3 direct WebGPU bridge.
   - Status: binding contract is active; generated fragment source is validated for the expected standard-surface shape; the browser WGSL fragment path now mirrors the generated outer `main()` to standard-surface call flow; a narrow custom translator compiles a first helper-function slice; Naga translates the full emitted shader fixtures offline; Chrome accepts the generated Naga vertex and pixel modules after the bool-uniform and subsurface-radius pre-passes; all nine translated samples compile as render pipelines with the direct WebGPU bind group layout; the direct viewer now defaults to the Naga-generated WGSL path with display encoding, Three.js orbit controls, runtime environment sample controls, mipmapped HDR radiance lookups, generated-style directional light data, and texture/sampler bindings for tiled wood and tiled brass.
@@ -83,17 +83,16 @@ Working checklist for the MaterialX viewer experiment. The deeper rationale live
 
 ## Next Tasks
 
-1. Wire the first direct WebGPU Material Lab properties panel.
-   - Derive fields from generated `PublicUniforms_pixel` metadata where available.
-   - Group common Standard Surface controls into practical sections.
-   - Apply live edits through the existing direct WebGPU public uniform buffer without shader regeneration.
-   - Keep texture graph and MaterialX document editing out of the first pass.
-
-2. Add capability routing between WebGPU/Naga and WebGL.
+1. Add capability routing between WebGPU/Naga and WebGL.
    - Probe `navigator.gpu`, adapter/device creation, and known shader pipeline compilation.
    - Route supported systems to WebGPU/Naga.
    - Route unsupported or failing systems to the existing WebGL viewer.
    - Surface a clear status if Naga fixtures are missing and fall back to WebGL or bridge only by explicit routing.
+
+2. Add graph-aware Material Lab editing.
+   - Add texture/file affordances for texture-backed samples.
+   - Preserve nodegraph inputs when exporting MaterialX instead of flattening to public uniform values only.
+   - Decide which graph edits are live, reload-only, or export-only.
 
 3. Capture a small baseline matrix for the representative generated samples in the WebGL viewer and `/webgpu-direct.html`.
    - Include first visible frame, steady FPS, frame-time average/p95, material switch CPU time, and material switch GPU completion time.

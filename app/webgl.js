@@ -10,6 +10,11 @@ import {
   setLoadingCallback,
   setSceneLoadingCallback,
 } from './materialx-viewer/dropHandling.js';
+import {
+  createMaterialPropertyModel,
+  renderMaterialPropertiesPanel,
+  summarizeMaterialPropertySupport,
+} from './material-properties.js';
 import { loadAssetManifest } from '../src/index.js';
 
 export function getFilePaths() {
@@ -199,6 +204,103 @@ function resolveAssetPath(paths, requested, fallback) {
   if (matchedPath) return matchedPath;
 
   return paths.includes(fallback) ? fallback : paths[0] || '';
+}
+
+const materialInputAliases = {
+  base: 'base',
+  base_color: 'baseColor',
+  coat: 'coat',
+  coat_IOR: 'coatIor',
+  coat_affect_color: 'coatAffectColor',
+  coat_affect_roughness: 'coatAffectRoughness',
+  coat_anisotropy: 'coatAnisotropy',
+  coat_color: 'coatColor',
+  coat_roughness: 'coatRoughness',
+  coat_rotation: 'coatRotation',
+  diffuse_roughness: 'diffuseRoughness',
+  emission: 'emission',
+  emission_color: 'emissionColor',
+  metalness: 'metalness',
+  opacity: 'opacity',
+  sheen: 'sheen',
+  sheen_color: 'sheenColor',
+  sheen_roughness: 'sheenRoughness',
+  specular: 'specular',
+  specular_IOR: 'specularIor',
+  specular_anisotropy: 'specularAnisotropy',
+  specular_color: 'specularColor',
+  specular_roughness: 'specularRoughness',
+  specular_rotation: 'specularRotation',
+  subsurface: 'subsurface',
+  subsurface_anisotropy: 'subsurfaceAnisotropy',
+  subsurface_color: 'subsurfaceColor',
+  subsurface_radius: 'subsurfaceRadius',
+  subsurface_scale: 'subsurfaceScale',
+  thin_film_IOR: 'thinFilmIor',
+  thin_film_thickness: 'thinFilmThickness',
+  thin_walled: 'thinWalled',
+  transmission: 'transmission',
+  transmission_color: 'transmissionColor',
+  transmission_depth: 'transmissionDepth',
+  transmission_dispersion: 'transmissionDispersion',
+  transmission_extra_roughness: 'transmissionExtraRoughness',
+  transmission_scatter: 'transmissionScatter',
+  transmission_scatter_anisotropy: 'transmissionScatterAnisotropy',
+};
+
+function parseMaterialInputValue(type, value) {
+  const normalized = String(value || '').trim();
+  if (type === 'boolean') return /^(1|true|yes|on)$/i.test(normalized) ? 1 : 0;
+  if (type === 'color3' || type === 'vector3') {
+    return normalized.split(',').map(component => Number(component.trim())).slice(0, 3);
+  }
+
+  const numeric = Number(normalized);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function parseMaterialPortsFromXml(xml) {
+  const document = new DOMParser().parseFromString(xml, 'application/xml');
+  const surface = document.querySelector('standard_surface');
+  const ports = {};
+  if (!surface) return ports;
+
+  surface.querySelectorAll('input[name][value]').forEach((input) => {
+    const name = materialInputAliases[input.getAttribute('name')];
+    if (!name) return;
+    ports[name] = parseMaterialInputValue(input.getAttribute('type'), input.getAttribute('value'));
+  });
+
+  return ports;
+}
+
+async function refreshWebglMaterialProperties(file) {
+  const root = document.querySelector('[data-material-properties]');
+  const summary = document.querySelector('[data-material-properties-summary]');
+  if (!root) return;
+
+  try {
+    const response = await fetch(file);
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    const ports = parseMaterialPortsFromXml(await response.text());
+    const model = createMaterialPropertyModel({
+      capabilities: { renderer: 'webgl' },
+      sample: {
+        label: prettyName(file),
+        ports,
+        source: 'webgl',
+      },
+      shaderMode: 'webgl',
+    });
+    renderMaterialPropertiesPanel(root, model);
+    if (summary) {
+      summary.textContent = `${model.sampleLabel} / WebGL fallback / ${summarizeMaterialPropertySupport(model)}`;
+    }
+  } catch (error) {
+    console.warn('Could not inspect WebGL MaterialX properties.', error);
+    root.replaceChildren();
+    if (summary) summary.textContent = 'Material properties unavailable';
+  }
 }
 
 function getMaterialPaths() {
@@ -618,6 +720,7 @@ async function loadSelectedMaterial(file, { updateUrl = true } = {}) {
   applyShaderCompilerOptions();
   await viewer.getMaterial().loadMaterials(viewer, materialFilename);
   viewer.getEditor().updateProperties(0.9);
+  await refreshWebglMaterialProperties(materialFilename);
   setStatus(`Material ready: ${prettyName(file)}`);
 }
 
@@ -651,6 +754,7 @@ async function loadSelectedEnvironment(file, { updateUrl = true } = {}) {
   applyShaderCompilerOptions();
   await viewer.getMaterial().loadMaterials(viewer, materialFilename);
   viewer.getEditor().updateProperties(0.9);
+  await refreshWebglMaterialProperties(materialFilename);
   setStatus(`Environment ready: ${prettyName(file)}`);
 }
 
@@ -727,6 +831,7 @@ async function initializeViewer() {
   await viewer.getMaterial().loadMaterials(viewer, materialFilename);
   await viewer.getMaterial().updateMaterialAssignments(viewer, '');
   viewer.getEditor().updateProperties(0.9);
+  await refreshWebglMaterialProperties(materialFilename);
 
   materialsSelect.addEventListener('change', event => loadSelectedMaterial(event.target.value).catch(reportError));
   geometrySelect.addEventListener('change', event => loadSelectedGeometry(event.target.value).catch(reportError));

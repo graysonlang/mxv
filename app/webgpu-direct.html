@@ -89,6 +89,13 @@
       white-space: nowrap;
     }
 
+    .properties-actions {
+      display: grid;
+      gap: 8px;
+      grid-template-columns: repeat(4, 1fr);
+      margin-top: 6px;
+    }
+
     .properties-list {
       display: grid;
       gap: 13px;
@@ -137,6 +144,7 @@
     }
 
     .property-row[data-status="readonly"],
+    .property-row[data-status="reload"],
     .property-row[data-status="unsupported"] {
       opacity: 0.62;
     }
@@ -253,6 +261,11 @@
       color: #a6f4ef;
     }
 
+    .support-pill.is-reload {
+      border-color: rgba(237, 196, 115, 0.35);
+      color: #efd48b;
+    }
+
     .support-pill.is-readonly,
     .support-pill.is-unsupported {
       color: #8d9a94;
@@ -270,6 +283,10 @@
       min-width: 0;
       padding: 0 10px;
       width: 100%;
+    }
+
+    .action-button.is-compact {
+      min-height: 28px;
     }
 
     .action-button:disabled {
@@ -341,6 +358,10 @@
 
       .property-row {
         grid-template-columns: minmax(76px, 0.7fr) minmax(0, 1fr) 44px;
+      }
+
+      .properties-actions {
+        grid-template-columns: repeat(2, 1fr);
       }
 
       .hud {
@@ -529,6 +550,13 @@
       <div class="properties-header">
         <h1 class="panel-title">Material Properties</h1>
         <div class="properties-summary" data-material-properties-summary>Waiting for shadergen</div>
+        <div class="properties-actions">
+          <button class="action-button is-compact" type="button" data-save-material-settings>Save</button>
+          <button class="action-button is-compact" type="button" data-load-material-settings>Load</button>
+          <button class="action-button is-compact" type="button" data-reset-material-settings>Reset</button>
+          <button class="action-button is-compact" type="button" data-export-materialx>Export</button>
+          <input data-load-material-settings-file type="file" accept="application/json,.json" hidden />
+        </div>
       </div>
       <div class="properties-list" data-material-properties></div>
     </aside>

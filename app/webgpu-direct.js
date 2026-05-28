@@ -41,6 +41,7 @@ const shaderModeLabels = {
 };
 const requestedShaderMode = queryParams.get('shader') || queryParams.get('shaderMode');
 let activeShaderMode = Object.hasOwn(shaderModeLabels, requestedShaderMode) ? requestedShaderMode : 'naga';
+const requestedMaterialSettings = queryParams.get('settings');
 const defaultEnvRadianceSamples = Number(queryParams.get('envSamples') || queryParams.get('samples') || 4);
 const defaultEnvLightIntensity = Number(queryParams.get('envIntensity') || 1);
 const defaultDrawEnvironment = parseBooleanQueryParam(
@@ -485,6 +486,7 @@ const fallbackMaterialSamples = {
 let materialSamples = createFallbackMaterialSamples();
 const requestedMaterial = queryParams.get('material');
 let activeMaterialId = Object.hasOwn(materialSamples, requestedMaterial) ? requestedMaterial : 'standard';
+let materialSettingsDefaults = createMaterialSettingsDefaults(materialSamples);
 let pendingMaterialSwitch = null;
 let materialSwitchId = 0;
 let materialBenchmarkTimer = null;
@@ -1690,6 +1692,7 @@ async function initializeMaterialXShaderSupport(materialControl, pipelineControl
     }
 
     materialSamples = Object.fromEntries(generatedEntries);
+    resetMaterialSettingsDefaults(materialSamples);
     const activeSample = materialSamples[activeMaterialId] || generatedEntries[0]?.[1];
     if (activeSample?.lightData?.[0]) {
       activeDirectLight = activeSample.lightData[0];
@@ -1705,26 +1708,38 @@ async function initializeMaterialXShaderSupport(materialControl, pipelineControl
     setMetric('fragmentTranslator', activeSample?.pixelContract ? `${activeSample.pixelContract.translatedFragment.translatedCount} translated / ${activeSample.pixelContract.translatedFragment.requestedCount} requested` : 'Naga-only texture graph');
     setMetric('shaderNotes', materialXKnownWarnings.size ? 'bool uniform mapped' : 'none');
     materialControl.refreshOptions();
-    materialControl.applyMaterial(activeMaterialId, { updateUrl: false });
-    if (activeSample?.vertexSource && pipelineControl.applyGeneratedVertexSource) {
+    const initialApplyResult = materialControl.applyMaterial(activeMaterialId, { updateUrl: false });
+    if (initialApplyResult && typeof initialApplyResult.then === 'function') {
+      await initialApplyResult;
+    }
+    const settingsApplyResult = pipelineControl.applyInitialMaterialSettings?.();
+    if (settingsApplyResult && typeof settingsApplyResult.then === 'function') {
+      await settingsApplyResult;
+    }
+    const latestActiveSample = materialSamples[activeMaterialId] || activeSample;
+    if (latestActiveSample?.vertexSource && pipelineControl.applyGeneratedVertexSource) {
       try {
         setStatus('Adapting MaterialX vertex shader');
-        await pipelineControl.applyGeneratedVertexSource(activeSample.vertexSource);
+        await pipelineControl.applyGeneratedVertexSource(latestActiveSample.vertexSource);
       } catch (error) {
         console.warn('Generated vertex adaptation failed, keeping bridge vertex stage.', error);
         setMetric('vertexAdapter', 'bridge fallback');
       }
     }
-    if (activeSample?.pixelContract?.translatedFragment.wgsl && pipelineControl.validateGeneratedFragmentTranslation) {
+    if (latestActiveSample?.pixelContract?.translatedFragment.wgsl && pipelineControl.validateGeneratedFragmentTranslation) {
       try {
         setStatus('Validating fragment translator');
-        const validationDuration = await pipelineControl.validateGeneratedFragmentTranslation(activeSample.pixelContract.translatedFragment.wgsl);
-        const { requestedCount, translatedCount } = activeSample.pixelContract.translatedFragment;
+        const validationDuration = await pipelineControl.validateGeneratedFragmentTranslation(latestActiveSample.pixelContract.translatedFragment.wgsl);
+        const { requestedCount, translatedCount } = latestActiveSample.pixelContract.translatedFragment;
         setMetric('fragmentTranslator', `${translatedCount}/${requestedCount} translated / ${formatDuration(validationDuration)}`);
       } catch (error) {
         console.warn('Generated fragment translation validation failed.', error);
         setMetric('fragmentTranslator', 'compile failed');
       }
+    }
+    const refreshResult = pipelineControl.refreshActiveShaderMode?.();
+    if (refreshResult && typeof refreshResult.then === 'function') {
+      await refreshResult;
     }
     setStatus('Ready');
   } catch (error) {
@@ -2669,6 +2684,379 @@ function updateQueryParam(name, value) {
   history.replaceState(null, '', nextUrl);
 }
 
+function updateMaterialQueryParams(materialId = activeMaterialId, options = {}) {
+  const nextUrl = new URL(document.location.href);
+  nextUrl.searchParams.set('material', materialId);
+  if (options.settings) {
+    nextUrl.searchParams.set('settings', options.settings);
+  } else if (options.clearSettings) {
+    nextUrl.searchParams.delete('settings');
+  }
+  history.replaceState(null, '', nextUrl);
+}
+
+function cloneSettingsValue(value) {
+  return Array.isArray(value) ? [...value] : value;
+}
+
+function cloneSettingsMap(values = {}) {
+  return Object.fromEntries(
+    Object.entries(values).map(([key, value]) => [key, cloneSettingsValue(value)]),
+  );
+}
+
+function sanitizeMaterialSettingsValue(value, fallback) {
+  if (Array.isArray(fallback)) {
+    const source = Array.isArray(value) ? value : [];
+    return fallback.map((fallbackComponent, index) => {
+      const component = Number(source[index]);
+      return Number.isFinite(component) ? component : fallbackComponent;
+    });
+  }
+
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function createMaterialSettingsSnapshotFromSample(materialId, sample, shaderMode = activeShaderMode) {
+  return {
+    schema: 'mxv.material-settings',
+    version: 1,
+    materialId,
+    materialLabel: sample.label,
+    shaderMode,
+    ports: cloneSettingsMap(sample.ports),
+    publicUniforms: cloneSettingsMap(sample.uniformValues),
+  };
+}
+
+function createMaterialSettingsSnapshot(materialId = activeMaterialId) {
+  const sample = materialSamples[materialId] || materialSamples.standard;
+  return createMaterialSettingsSnapshotFromSample(materialId, sample);
+}
+
+function createMaterialSettingsDefaults(samples) {
+  return new Map(
+    Object.entries(samples).map(([materialId, sample]) => [
+      materialId,
+      createMaterialSettingsSnapshotFromSample(materialId, sample),
+    ]),
+  );
+}
+
+function resetMaterialSettingsDefaults(samples = materialSamples) {
+  materialSettingsDefaults = createMaterialSettingsDefaults(samples);
+}
+
+function encodeMaterialSettingsForUrl(settings) {
+  const json = JSON.stringify(settings);
+  const encoded = btoa(encodeURIComponent(json));
+  return encoded.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function decodeMaterialSettingsFromUrl(value) {
+  if (!value) return null;
+
+  const base64 = value.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(value.length / 4) * 4, '=');
+  return parseMaterialSettings(decodeURIComponent(atob(base64)));
+}
+
+function getRequestedMaterialSettings() {
+  if (!requestedMaterialSettings) return null;
+
+  try {
+    return decodeMaterialSettingsFromUrl(requestedMaterialSettings);
+  } catch (error) {
+    console.warn('Could not parse material settings from URL.', error);
+    setMetric('shaderNotes', 'Could not parse URL material settings');
+    return null;
+  }
+}
+
+function persistMaterialSettingsToUrl() {
+  updateMaterialQueryParams(activeMaterialId, {
+    settings: encodeMaterialSettingsForUrl(createMaterialSettingsSnapshot()),
+  });
+}
+
+function clearMaterialSettingsFromUrl() {
+  updateMaterialQueryParams(activeMaterialId, { clearSettings: true });
+}
+
+function settingsValueEquals(left, right) {
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+    return left.every((value, index) => settingsValueEquals(value, right[index]));
+  }
+
+  if (typeof left === 'number' || typeof right === 'number') {
+    return Math.abs(Number(left) - Number(right)) < 0.00001;
+  }
+
+  return left === right;
+}
+
+function settingsMapEquals(left = {}, right = {}) {
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+  for (const key of keys) {
+    if (!Object.hasOwn(left, key) || !Object.hasOwn(right, key)) return false;
+    if (!settingsValueEquals(left[key], right[key])) return false;
+  }
+  return true;
+}
+
+function isMaterialSettingsDirty(materialId = activeMaterialId) {
+  const baseline = materialSettingsDefaults.get(materialId);
+  if (!baseline) return false;
+
+  const current = createMaterialSettingsSnapshot(materialId);
+  return !settingsMapEquals(current.ports, baseline.ports)
+    || !settingsMapEquals(current.publicUniforms, baseline.publicUniforms);
+}
+
+function getMaterialSettingsHandleError(error) {
+  if (error?.name === 'AbortError') return null;
+  return error;
+}
+
+function getMaterialSettingsFilename(settings) {
+  const label = settings.materialLabel || settings.materialId || 'material';
+  const slug = String(label)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'material';
+  return `${slug}-settings.json`;
+}
+
+function getMaterialXExportFilename(materialId = activeMaterialId) {
+  return getMaterialSettingsFilename(createMaterialSettingsSnapshot(materialId)).replace(/-settings\.json$/u, '.mtlx');
+}
+
+function downloadTextFile(text, filename, type) {
+  const blob = new Blob([text], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.download = filename;
+  link.href = url;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+async function saveTextFile({ accept, description, suggestedName, text, type }) {
+  if (typeof window.showSaveFilePicker === 'function') {
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName,
+        types: [
+          {
+            accept,
+            description,
+          },
+        ],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(text);
+      await writable.close();
+      return true;
+    } catch (error) {
+      const handled = getMaterialSettingsHandleError(error);
+      if (!handled) return false;
+      throw handled;
+    }
+  }
+
+  downloadTextFile(text, suggestedName, type);
+  return true;
+}
+
+async function saveMaterialSettingsFile() {
+  const settings = createMaterialSettingsSnapshot();
+  const saved = await saveTextFile({
+    accept: { 'application/json': ['.json'] },
+    description: 'mxv material settings',
+    suggestedName: getMaterialSettingsFilename(settings),
+    text: `${JSON.stringify(settings, null, 2)}\n`,
+    type: 'application/json',
+  });
+  setStatus(saved ? 'Saved material settings' : 'Save canceled');
+}
+
+function applyMaterialSettingsToSample(sample, settings) {
+  let appliedCount = 0;
+  const publicUniforms = settings.publicUniforms && typeof settings.publicUniforms === 'object'
+    ? settings.publicUniforms
+    : {};
+  const ports = settings.ports && typeof settings.ports === 'object'
+    ? settings.ports
+    : {};
+
+  if (sample.uniformLayout?.ports?.length) {
+    for (const port of sample.uniformLayout.ports) {
+      if (!Object.hasOwn(publicUniforms, port.field)) continue;
+      if (sample.uniformValues && Object.hasOwn(sample.uniformValues, port.field)) {
+        sample.uniformValues[port.field] = sanitizeMaterialSettingsValue(publicUniforms[port.field], sample.uniformValues[port.field]);
+      }
+      if (sample.ports && Object.hasOwn(sample.ports, port.name)) {
+        sample.ports[port.name] = sanitizeMaterialSettingsValue(publicUniforms[port.field], sample.ports[port.name]);
+      }
+      appliedCount++;
+    }
+  } else {
+    for (const [field, currentValue] of Object.entries(sample.uniformValues || {})) {
+      if (!Object.hasOwn(publicUniforms, field)) continue;
+      sample.uniformValues[field] = sanitizeMaterialSettingsValue(publicUniforms[field], currentValue);
+      appliedCount++;
+    }
+  }
+
+  for (const [name, currentValue] of Object.entries(sample.ports || {})) {
+    if (!Object.hasOwn(ports, name)) continue;
+    sample.ports[name] = sanitizeMaterialSettingsValue(ports[name], currentValue);
+    const uniformPort = sample.uniformLayout?.byName?.[name];
+    if (uniformPort && sample.uniformValues && Object.hasOwn(sample.uniformValues, uniformPort.field)) {
+      sample.uniformValues[uniformPort.field] = sanitizeMaterialSettingsValue(ports[name], sample.uniformValues[uniformPort.field]);
+    }
+    appliedCount++;
+  }
+
+  return appliedCount;
+}
+
+function parseMaterialSettings(text) {
+  const settings = JSON.parse(text);
+  if (!settings || typeof settings !== 'object') {
+    throw new Error('Material settings file did not contain a JSON object.');
+  }
+
+  if (settings.schema && settings.schema !== 'mxv.material-settings') {
+    throw new Error(`Unsupported material settings schema: ${settings.schema}.`);
+  }
+
+  return settings;
+}
+
+function escapeXml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function sanitizeMaterialXIdentifier(value, fallback) {
+  const identifier = String(value || '')
+    .replace(/[^A-Za-z0-9_]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  if (!identifier) return fallback;
+  return /^[A-Za-z_]/.test(identifier) ? identifier : `M_${identifier}`;
+}
+
+function formatMaterialXNumber(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '0';
+  return Number(numeric.toFixed(6)).toString();
+}
+
+function formatMaterialXValue(type, value) {
+  if (type === 'boolean') {
+    return Number(value) ? 'true' : 'false';
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(formatMaterialXNumber).join(', ');
+  }
+
+  return formatMaterialXNumber(value);
+}
+
+function getMaterialXExportPorts(sample) {
+  if (sample.uniformLayout?.ports?.length) {
+    return sample.uniformLayout.ports
+      .filter(port => port.type !== 'filename' && port.type !== 'string')
+      .map(port => ({
+        field: port.field,
+        name: port.name,
+        type: port.sourceType === 'boolean' ? 'boolean' : port.sourceType || port.type,
+        value: sample.uniformValues?.[port.field] ?? sample.ports?.[port.name],
+      }));
+  }
+
+  return materialUniformLayout.ports.map(port => ({
+    field: port.field,
+    name: port.name,
+    type: materialPortTypes[port.name] === 'integer' ? 'boolean' : materialPortTypes[port.name],
+    value: sample.ports?.[port.name],
+  }));
+}
+
+function createMaterialXExportSource(materialId = activeMaterialId) {
+  const sample = materialSamples[materialId] || materialSamples.standard;
+  const nodeSuffix = sanitizeMaterialXIdentifier(materialId, 'material');
+  const shaderName = `SR_${nodeSuffix}`;
+  const materialName = `MAT_${nodeSuffix}`;
+  const inputs = getMaterialXExportPorts(sample)
+    .filter(port => port.value !== undefined && port.value !== null)
+    .map((port) => {
+      const type = port.field === 'thin_walled' || port.name === 'thinWalled'
+        ? 'boolean'
+        : port.type;
+      return `    <input name="${escapeXml(port.field)}" type="${escapeXml(type)}" value="${escapeXml(formatMaterialXValue(type, port.value))}" />`;
+    })
+    .join('\n');
+
+  return `<?xml version="1.0"?>\n<materialx version="1.39" colorspace="lin_rec709">\n  <standard_surface name="${escapeXml(shaderName)}" type="surfaceshader">\n${inputs}\n  </standard_surface>\n  <surfacematerial name="${escapeXml(materialName)}" type="material">\n    <input name="surfaceshader" type="surfaceshader" nodename="${escapeXml(shaderName)}" />\n  </surfacematerial>\n</materialx>\n`;
+}
+
+async function exportMaterialXFile() {
+  const saved = await saveTextFile({
+    accept: { 'application/xml': ['.mtlx'] },
+    description: 'MaterialX material',
+    suggestedName: getMaterialXExportFilename(),
+    text: createMaterialXExportSource(),
+    type: 'application/xml',
+  });
+  setStatus(saved ? 'Exported MaterialX material' : 'Export canceled');
+}
+
+async function applyMaterialSettings(settings, controls, options = {}) {
+  const {
+    persistUrl = true,
+    status = 'Loaded material settings',
+    suffix = 'loaded',
+    switchMaterial = true,
+  } = options;
+  const settingsMaterialId = typeof settings.materialId === 'string' && Object.hasOwn(materialSamples, settings.materialId)
+    ? settings.materialId
+    : activeMaterialId;
+
+  if (switchMaterial && settingsMaterialId !== activeMaterialId) {
+    await controls.materialControl.applyMaterial(settingsMaterialId, {
+      preserveSettings: true,
+      updateUrl: false,
+    });
+  }
+
+  const sample = materialSamples[activeMaterialId] || materialSamples.standard;
+  const appliedCount = applyMaterialSettingsToSample(sample, settings);
+  if (!appliedCount) {
+    throw new Error('No matching material settings were found.');
+  }
+
+  const uploadStart = performance.now();
+  const writtenSample = writeMaterialUniforms(controls.publicUniformData, activeMaterialId, {
+    shaderMode: activeShaderMode,
+  });
+  controls.device.queue.writeBuffer(controls.publicUniformBuffer, 0, controls.publicUniformData.bytes);
+  controls.materialPropertiesControl.refresh();
+  setMetric('materialUpload', formatDuration(performance.now() - uploadStart));
+  setMetric('material', `${writtenSample.label} (${writtenSample.source}, ${suffix})`);
+  if (persistUrl) {
+    persistMaterialSettingsToUrl();
+  }
+  setStatus(status);
+}
+
 function bindShaderModeSelect(onModeChanged) {
   const select = document.getElementById('shader-mode');
   if (!select) {
@@ -2754,11 +3142,30 @@ function bindDirectLightControls() {
 function bindMaterialPropertiesPanel(device, publicUniformBuffer, publicUniformData) {
   const root = document.querySelector('[data-material-properties]');
   const summary = document.querySelector('[data-material-properties-summary]');
+  const resetButton = document.querySelector('[data-reset-material-settings]');
   if (!root) {
     return {
       refresh: () => {},
+      refreshStatus: () => {},
     };
   }
+
+  const refreshStatus = () => {
+    const sample = materialSamples[activeMaterialId] || materialSamples.standard;
+    const model = createMaterialPropertyModel({
+      sample,
+      shaderMode: activeShaderMode,
+    });
+    const dirty = isMaterialSettingsDirty(activeMaterialId);
+    if (summary) {
+      const shaderLabel = shaderModeLabels[activeShaderMode] || activeShaderMode;
+      const editState = dirty ? 'edited' : 'default';
+      summary.textContent = `${model.sampleLabel} / ${shaderLabel} / ${editState} / ${summarizeMaterialPropertySupport(model)}`;
+    }
+    if (resetButton) {
+      resetButton.disabled = !dirty;
+    }
+  };
 
   const refresh = () => {
     const sample = materialSamples[activeMaterialId] || materialSamples.standard;
@@ -2780,17 +3187,110 @@ function bindMaterialPropertiesPanel(device, publicUniformBuffer, publicUniformD
         device.queue.writeBuffer(publicUniformBuffer, 0, publicUniformData.bytes);
         setMetric('materialUpload', formatDuration(performance.now() - uploadStart));
         setMetric('material', `${writtenSample.label} (${writtenSample.source}, edited)`);
+        persistMaterialSettingsToUrl();
+        refreshStatus();
       },
     });
 
-    if (summary) {
-      const shaderLabel = shaderModeLabels[activeShaderMode] || activeShaderMode;
-      summary.textContent = `${model.sampleLabel} / ${shaderLabel} / ${summarizeMaterialPropertySupport(model)}`;
-    }
+    refreshStatus();
   };
 
   refresh();
-  return { refresh };
+  return {
+    refresh,
+    refreshStatus,
+  };
+}
+
+async function applyMaterialSettingsFile(file, controls) {
+  if (!file) return;
+
+  const settings = parseMaterialSettings(await file.text());
+  await applyMaterialSettings(settings, controls, {
+    status: 'Loaded material settings',
+    suffix: 'loaded',
+  });
+}
+
+async function resetActiveMaterialSettings(controls) {
+  const settings = materialSettingsDefaults.get(activeMaterialId);
+  if (!settings) {
+    throw new Error('No default settings are available for this material.');
+  }
+
+  await applyMaterialSettings(settings, controls, {
+    persistUrl: false,
+    status: 'Reset material settings',
+    suffix: 'default',
+    switchMaterial: false,
+  });
+  clearMaterialSettingsFromUrl();
+}
+
+function bindMaterialSettingsIo(controls) {
+  const saveButton = document.querySelector('[data-save-material-settings]');
+  const loadButton = document.querySelector('[data-load-material-settings]');
+  const resetButton = document.querySelector('[data-reset-material-settings]');
+  const exportButton = document.querySelector('[data-export-materialx]');
+  const fileInput = document.querySelector('[data-load-material-settings-file]');
+
+  const runButtonTask = async (button, task) => {
+    if (button) button.disabled = true;
+    try {
+      await task();
+    } catch (error) {
+      console.warn('Material file operation failed.', error);
+      setMetric('shaderNotes', error?.message || String(error));
+      setStatus(error?.message || 'Material file operation failed');
+    } finally {
+      if (button) button.disabled = false;
+      controls.materialPropertiesControl.refreshStatus();
+    }
+  };
+
+  saveButton?.addEventListener('click', () => runButtonTask(saveButton, saveMaterialSettingsFile));
+  exportButton?.addEventListener('click', () => runButtonTask(exportButton, exportMaterialXFile));
+  loadButton?.addEventListener('click', () => runButtonTask(loadButton, async () => {
+    if (typeof window.showOpenFilePicker === 'function') {
+      try {
+        const [handle] = await window.showOpenFilePicker({
+          multiple: false,
+          types: [
+            {
+              accept: { 'application/json': ['.json'] },
+              description: 'mxv material settings',
+            },
+          ],
+        });
+        if (!handle) return;
+        await applyMaterialSettingsFile(await handle.getFile(), controls);
+      } catch (error) {
+        const handled = getMaterialSettingsHandleError(error);
+        if (handled) throw handled;
+        setStatus('Load canceled');
+      }
+      return;
+    }
+
+    fileInput?.click();
+  }));
+  resetButton?.addEventListener('click', () => runButtonTask(resetButton, () => resetActiveMaterialSettings(controls)));
+  fileInput?.addEventListener('change', async () => {
+    const [file] = fileInput.files || [];
+    if (!file) return;
+
+    loadButton.disabled = true;
+    try {
+      await applyMaterialSettingsFile(file, controls);
+    } catch (error) {
+      console.warn('Material settings load failed.', error);
+      setMetric('shaderNotes', error?.message || String(error));
+      setStatus('Material settings load failed');
+    } finally {
+      loadButton.disabled = false;
+      fileInput.value = '';
+    }
+  });
 }
 
 async function fetchTextResource(url, label) {
@@ -2926,10 +3426,12 @@ function bindMaterialSelect(device, publicUniformBuffer, publicUniformData, opti
   const applyMaterial = (materialId, options = {}) => {
     const {
       measure = false,
+      preserveSettings = false,
       updateUrl = true,
     } = options;
     const uploadStart = performance.now();
     activeMaterialId = materialId;
+    select.value = activeMaterialId;
     const sample = writeMaterialUniforms(publicUniformData, activeMaterialId);
     device.queue.writeBuffer(publicUniformBuffer, 0, publicUniformData.bytes);
     setMetric('materialUpload', formatDuration(performance.now() - uploadStart));
@@ -2941,8 +3443,9 @@ function bindMaterialSelect(device, publicUniformBuffer, publicUniformData, opti
       ? describeBindingContract(sample)
       : `bindings 0-7 / ${privatePixelUniformPorts.length} private ports / ${privatePixelByteLength} B`);
     const callbackResult = onMaterialApplied?.(activeMaterialId, sample, options);
+    let handledCallbackResult = callbackResult;
     if (callbackResult && typeof callbackResult.catch === 'function') {
-      callbackResult.catch((error) => {
+      handledCallbackResult = callbackResult.catch((error) => {
         console.warn('Material pipeline update failed.', error);
         setMetric('shaderNotes', error?.message || String(error));
       });
@@ -2956,8 +3459,10 @@ function bindMaterialSelect(device, publicUniformBuffer, publicUniformData, opti
     }
 
     if (updateUrl) {
-      updateQueryParam('material', activeMaterialId);
+      updateMaterialQueryParams(activeMaterialId, { clearSettings: !preserveSettings });
     }
+
+    return handledCallbackResult || null;
   };
 
   const runBenchmark = () => {
@@ -3245,7 +3750,29 @@ async function main() {
       });
     },
   });
+  const initialMaterialSettings = getRequestedMaterialSettings();
+  bindMaterialSettingsIo({
+    device,
+    materialControl,
+    materialPropertiesControl,
+    publicUniformBuffer,
+    publicUniformData,
+  });
   const pipelineControl = {
+    applyInitialMaterialSettings: () => {
+      if (!initialMaterialSettings) return null;
+      return applyMaterialSettings(initialMaterialSettings, {
+        device,
+        materialControl,
+        materialPropertiesControl,
+        publicUniformBuffer,
+        publicUniformData,
+      }, {
+        persistUrl: false,
+        status: 'Loaded URL material settings',
+        suffix: 'URL',
+      });
+    },
     applyGeneratedVertexSource: async (generatedVertexSource) => {
       const adapterStart = performance.now();
       const adapted = adaptGeneratedVertexSource(generatedVertexSource);
@@ -3263,6 +3790,9 @@ async function main() {
       setMetric('vertexAdapter', `${adapted.lineCount} GLSL -> WGSL / ${formatDuration(adapterDuration)}`);
     },
     validateGeneratedFragmentTranslation: generatedFragmentWgsl => validateGeneratedFragmentTranslation(device, generatedFragmentWgsl),
+    refreshActiveShaderMode: () => activeShaderMode === 'naga'
+      ? applyPipelineForShaderMode(activeMaterialId, { requireShadergen: true })
+      : null,
     updateLightData: (light) => {
       writeLightUniforms(lightData, light);
       device.queue.writeBuffer(lightDataBuffer, 0, lightData.bytes);

@@ -101,10 +101,18 @@ function findGeneratedPort(sample, definition) {
     || sample?.uniformLayout?.byField?.[definition.field];
 }
 
-function getPropertySupport(sample, definition, shaderMode) {
+function getPropertySupport(sample, definition, shaderMode, capabilities = {}) {
   const generatedPort = findGeneratedPort(sample, definition);
   const hasGeneratedValue = generatedPort && hasOwn(sample?.uniformValues, generatedPort.field);
   const hasBridgeValue = hasOwn(sample?.ports, definition.name);
+  const renderer = capabilities.renderer || 'direct-webgpu';
+
+  if (renderer === 'webgl') {
+    if (hasBridgeValue) {
+      return { detail: 'available after MaterialX reload in WebGL fallback', status: 'reload' };
+    }
+    return { detail: 'not found in selected MaterialX document', status: 'unsupported' };
+  }
 
   if (sample?.source !== 'shadergen' && hasBridgeValue) {
     return { detail: 'fallback uniforms', status: 'live' };
@@ -169,13 +177,13 @@ function normalizeDefinition(definition) {
   };
 }
 
-export function createMaterialPropertyModel({ sample, shaderMode }) {
+export function createMaterialPropertyModel({ capabilities = {}, sample, shaderMode }) {
   return {
     groups: propertyGroups.map(group => ({
       ...group,
       properties: group.properties.map((rawDefinition) => {
         const definition = normalizeDefinition(rawDefinition);
-        const support = getPropertySupport(sample, definition, shaderMode);
+        const support = getPropertySupport(sample, definition, shaderMode, capabilities);
         return {
           ...definition,
           detail: support.detail,
