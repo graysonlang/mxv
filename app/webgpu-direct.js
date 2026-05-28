@@ -78,8 +78,8 @@ const maxPublicUniformByteLength = 4096;
 const environmentBackgroundFloatCount = 16;
 const lightDataByteLength = 48;
 const vertexStrideFloats = 11;
-const environmentToneGridColumns = 11;
-const environmentToneGridRows = 7;
+const environmentToneSampleCount = 89;
+const environmentToneGoldenAngle = Math.PI * (3 - Math.sqrt(5));
 const environmentToneMapWidth = 128;
 const environmentToneMapHeight = 64;
 const environmentToneBlurPasses = 2;
@@ -2478,6 +2478,15 @@ function sampleEnvironmentTonePoint(source, direction) {
   };
 }
 
+function createPhyllotaxisNdcPoint(index, count) {
+  const radius = Math.sqrt((index + 0.5) / count);
+  const angle = index * environmentToneGoldenAngle;
+  return {
+    x: Math.cos(angle) * radius,
+    y: Math.sin(angle) * radius,
+  };
+}
+
 function createVisibleEnvironmentToneStats(source, dimensions, cameraRig) {
   if (!source?.data) return null;
   const aspect = dimensions.width / dimensions.height;
@@ -2489,20 +2498,17 @@ function createVisibleEnvironmentToneStats(source, dimensions, cameraRig) {
   const luminanceValues = [];
   const samplePoints = [];
 
-  for (let row = 0; row < environmentToneGridRows; row++) {
-    const ndcY = -1 + (row + 0.5) * 2 / environmentToneGridRows;
-    for (let column = 0; column < environmentToneGridColumns; column++) {
-      const ndcX = -1 + (column + 0.5) * 2 / environmentToneGridColumns;
-      const direction = [
-        forward[0] + right[0] * ndcX * aspect * tanHalfFov + up[0] * ndcY * tanHalfFov,
-        forward[1] + right[1] * ndcX * aspect * tanHalfFov + up[1] * ndcY * tanHalfFov,
-        forward[2] + right[2] * ndcX * aspect * tanHalfFov + up[2] * ndcY * tanHalfFov,
-      ];
-      const point = sampleEnvironmentTonePoint(source, direction);
-      if (point && Number.isFinite(point.luminance) && point.luminance > 0) {
-        luminanceValues.push(point.luminance);
-        samplePoints.push(point);
-      }
+  for (let index = 0; index < environmentToneSampleCount; index++) {
+    const ndc = createPhyllotaxisNdcPoint(index, environmentToneSampleCount);
+    const direction = [
+      forward[0] + right[0] * ndc.x * aspect * tanHalfFov + up[0] * ndc.y * tanHalfFov,
+      forward[1] + right[1] * ndc.x * aspect * tanHalfFov + up[1] * ndc.y * tanHalfFov,
+      forward[2] + right[2] * ndc.x * aspect * tanHalfFov + up[2] * ndc.y * tanHalfFov,
+    ];
+    const point = sampleEnvironmentTonePoint(source, direction);
+    if (point && Number.isFinite(point.luminance) && point.luminance > 0) {
+      luminanceValues.push(point.luminance);
+      samplePoints.push(point);
     }
   }
 
