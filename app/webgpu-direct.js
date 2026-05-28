@@ -2185,10 +2185,51 @@ function getEnvironmentIrradiancePath(environmentPath) {
   return environmentPath.replace('/Lights/', '/Lights/irradiance/');
 }
 
+function isSplitEnvironmentPath(environmentPath) {
+  return /_split\.hdr$/i.test(environmentPath);
+}
+
+function getEnvironmentFamilyPath(environmentPath) {
+  return environmentPath.replace(/_split(?=\.hdr$)/i, '');
+}
+
+function getEnvironmentFamilyKey(environmentPath) {
+  return assetNameKey(getEnvironmentFamilyPath(environmentPath));
+}
+
+function preferSplitEnvironmentPaths(environmentPaths) {
+  const preferredByFamily = new Map();
+  for (const path of environmentPaths) {
+    const familyKey = getEnvironmentFamilyKey(path);
+    const existing = preferredByFamily.get(familyKey);
+    if (!existing || isSplitEnvironmentPath(path)) {
+      preferredByFamily.set(familyKey, path);
+    }
+  }
+
+  return [...preferredByFamily.values()]
+    .sort((a, b) => prettyAssetName(a).localeCompare(prettyAssetName(b)));
+}
+
 function getEnvironmentPaths() {
-  return materialXResourcePaths
+  const environmentPaths = materialXResourcePaths
     .filter(path => path.includes('/Lights/') && !path.includes('/Lights/irradiance/') && path.endsWith('.hdr'))
     .sort((a, b) => prettyAssetName(a).localeCompare(prettyAssetName(b)));
+  return preferSplitEnvironmentPaths(environmentPaths);
+}
+
+function resolveEnvironmentPath(paths, requested, fallback) {
+  if (paths.includes(requested)) return requested;
+
+  const requestedKey = assetNameKey(requested);
+  const directMatch = paths.find(path => assetNameKey(path) === requestedKey);
+  if (directMatch) return directMatch;
+
+  const requestedFamilyKey = getEnvironmentFamilyKey(requested);
+  const familyMatch = paths.find(path => getEnvironmentFamilyKey(path) === requestedFamilyKey);
+  if (familyMatch) return familyMatch;
+
+  return resolveAssetPath(paths, fallback, fallback);
 }
 
 function getEnvironmentAssets(environmentPath) {
@@ -2215,7 +2256,7 @@ async function initializeAssetManifest() {
   }
 
   const environmentPaths = getEnvironmentPaths();
-  environmentFilename = resolveAssetPath(environmentPaths, environmentFilename, defaultEnvironment) || defaultEnvironment;
+  environmentFilename = resolveEnvironmentPath(environmentPaths, environmentFilename, defaultEnvironment) || defaultEnvironment;
   return environmentPaths.length ? environmentPaths : [environmentFilename];
 }
 
