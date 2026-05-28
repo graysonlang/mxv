@@ -338,6 +338,40 @@
       pointer-events: none;
     }
 
+    .tone-debug-panel {
+      background: rgba(13, 17, 16, 0.78);
+      border: 1px solid rgba(194, 211, 203, 0.18);
+      bottom: 52px;
+      box-sizing: border-box;
+      display: grid;
+      gap: 6px;
+      padding: 8px;
+      position: fixed;
+      right: 368px;
+      width: 264px;
+      z-index: 6;
+    }
+
+    .tone-debug-panel[hidden] {
+      display: none;
+    }
+
+    .tone-debug-panel canvas {
+      aspect-ratio: 2 / 1;
+      background: #050706;
+      display: block;
+      image-rendering: pixelated;
+      width: 100%;
+    }
+
+    .tone-debug-meta {
+      color: #a8b5ae;
+      font: 11px/1.25 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
     .status,
     .fps {
       background: rgba(13, 17, 16, 0.72);
@@ -386,6 +420,13 @@
       .hud {
         align-items: stretch;
         flex-direction: column;
+      }
+
+      .tone-debug-panel {
+        bottom: 112px;
+        left: 12px;
+        right: auto;
+        width: min(264px, calc(100vw - 24px));
       }
 
       .value {
@@ -446,6 +487,12 @@
         <label class="label" for="draw-environment">Environment</label>
         <span class="toggle-control">
           <input id="draw-environment" name="draw-environment" type="checkbox" />
+        </span>
+      </div>
+      <div class="control-row">
+        <label class="label" for="env-tone-debug">Tone Debug</label>
+        <span class="toggle-control">
+          <input id="env-tone-debug" name="env-tone-debug" type="checkbox" />
         </span>
       </div>
       <div class="control-row">
@@ -604,6 +651,10 @@
         </div>
       </div>
       <div class="properties-list" data-material-properties></div>
+    </aside>
+    <aside class="tone-debug-panel" data-env-tone-debug hidden aria-label="Environment tone debug">
+      <canvas data-env-tone-debug-canvas width="128" height="64"></canvas>
+      <div class="tone-debug-meta" data-env-tone-debug-meta>-</div>
     </aside>
     <div class="hud">
       <div class="status">

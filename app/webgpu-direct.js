@@ -58,6 +58,10 @@ const defaultDrawEnvironment = parseBooleanQueryParam(
 );
 const defaultDirectLightEnabled = parseBooleanQueryParam(queryParams.get('directLight'), true);
 const defaultEnvironmentToneMode = getRequestedEnvironmentToneMode();
+const defaultEnvironmentToneDebugEnabled = parseBooleanQueryParam(
+  queryParams.get('envToneDebug') || queryParams.get('toneDebug'),
+  false,
+);
 let envRadianceSamples = Number.isFinite(defaultEnvRadianceSamples)
   ? Math.max(0, Math.min(16, Math.round(defaultEnvRadianceSamples)))
   : 4;
@@ -67,6 +71,7 @@ let envLightIntensity = Number.isFinite(defaultEnvLightIntensity)
 let drawEnvironment = defaultDrawEnvironment;
 let directLightEnabled = defaultDirectLightEnabled;
 let adaptiveEnvironmentToneEnabled = defaultEnvironmentToneMode === 'adaptive';
+let environmentToneDebugEnabled = defaultEnvironmentToneDebugEnabled;
 const privateVertexFloatCount = 48;
 const privatePixelByteLength = 96;
 const maxPublicUniformByteLength = 4096;
@@ -89,6 +94,7 @@ let activeDirectLight = {
 let activeLightRigPath = '';
 let activeEnvironmentToneSource = null;
 let activeEnvironmentToneStats = null;
+let activeEnvironmentToneDebugImageData = null;
 let environmentToneLastMetricTime = 0;
 const materialXBoolUniformWarning = 'WGSL does not allow boolean types to be stored in uniform or storage address spaces.';
 const materialXKnownWarnings = new Set();
@@ -2416,6 +2422,26 @@ function createEnvironmentToneSource(hdr) {
   return blurEnvironmentToneMap(createDownsampledEnvironmentToneMap(hdr));
 }
 
+function createEnvironmentToneDebugImageData(source) {
+  if (!source?.data || !source.width || !source.height) return null;
+  const luminanceValues = Array.from(source.data).filter(value => Number.isFinite(value) && value > 0);
+  const stats = createLuminanceStats(luminanceValues);
+  const reference = Math.max(stats.p99, stats.average, 0.0001);
+  const image = new ImageData(source.width, source.height);
+
+  for (let index = 0; index < source.data.length; index++) {
+    const normalized = Math.min(1, Math.max(0, source.data[index] / reference));
+    const value = Math.round(Math.sqrt(normalized) * 255);
+    const offset = index * 4;
+    image.data[offset] = value;
+    image.data[offset + 1] = value;
+    image.data[offset + 2] = value;
+    image.data[offset + 3] = 255;
+  }
+
+  return image;
+}
+
 function sampleToneMapBilinear(source, x, y) {
   const x0 = Math.floor(x);
   const y0 = Math.floor(y);
@@ -2434,8 +2460,8 @@ function sampleToneMapBilinear(source, x, y) {
   return top * (1 - ty) + bottom * ty;
 }
 
-function sampleEnvironmentLuminance(source, direction) {
-  if (!source?.data || !source.width || !source.height) return 0;
+function sampleEnvironmentTonePoint(source, direction) {
+  if (!source?.data || !source.width || !source.height) return null;
   const length = Math.hypot(direction[0], direction[1], direction[2]) || 1;
   const x = direction[0] / length;
   const y = direction[1] / length;
@@ -2443,15 +2469,17 @@ function sampleEnvironmentLuminance(source, direction) {
   const u = Math.atan2(x, -z) * 0.15915494309189535 + 0.5;
   const v = Math.acos(Math.min(1, Math.max(-1, y))) * 0.3183098861837907;
   const rotatedU = ((u + 0.5) % 1 + 1) % 1;
-  return sampleToneMapBilinear(
-    source,
-    rotatedU * source.width - 0.5,
-    v * source.height - 0.5,
-  );
+  const sampleX = rotatedU * source.width - 0.5;
+  const sampleY = v * source.height - 0.5;
+  return {
+    luminance: sampleToneMapBilinear(source, sampleX, sampleY),
+    x: sampleX,
+    y: sampleY,
+  };
 }
 
 function createVisibleEnvironmentToneStats(source, dimensions, cameraRig) {
-  if (!source?.data || !drawEnvironment) return null;
+  if (!source?.data) return null;
   const aspect = dimensions.width / dimensions.height;
   const tanHalfFov = Math.tan(cameraFov / 2);
   const elements = cameraRig.camera.matrixWorld.elements;
@@ -2459,6 +2487,7 @@ function createVisibleEnvironmentToneStats(source, dimensions, cameraRig) {
   const up = [elements[4], elements[5], elements[6]];
   const forward = [-elements[8], -elements[9], -elements[10]];
   const luminanceValues = [];
+  const samplePoints = [];
 
   for (let row = 0; row < environmentToneGridRows; row++) {
     const ndcY = -1 + (row + 0.5) * 2 / environmentToneGridRows;
@@ -2469,14 +2498,18 @@ function createVisibleEnvironmentToneStats(source, dimensions, cameraRig) {
         forward[1] + right[1] * ndcX * aspect * tanHalfFov + up[1] * ndcY * tanHalfFov,
         forward[2] + right[2] * ndcX * aspect * tanHalfFov + up[2] * ndcY * tanHalfFov,
       ];
-      const luminance = sampleEnvironmentLuminance(source, direction);
-      if (Number.isFinite(luminance) && luminance > 0) {
-        luminanceValues.push(luminance);
+      const point = sampleEnvironmentTonePoint(source, direction);
+      if (point && Number.isFinite(point.luminance) && point.luminance > 0) {
+        luminanceValues.push(point.luminance);
+        samplePoints.push(point);
       }
     }
   }
 
-  return createLuminanceStats(luminanceValues);
+  return {
+    ...createLuminanceStats(luminanceValues),
+    samplePoints,
+  };
 }
 
 function getEnvironmentBackgroundExposure() {
@@ -2515,14 +2548,64 @@ function updateEnvironmentToneMetric() {
   );
 }
 
+function renderEnvironmentToneDebug() {
+  const panel = document.querySelector('[data-env-tone-debug]');
+  const canvas = document.querySelector('[data-env-tone-debug-canvas]');
+  const meta = document.querySelector('[data-env-tone-debug-meta]');
+  if (!panel || !canvas) return;
+
+  panel.hidden = !environmentToneDebugEnabled;
+  if (!environmentToneDebugEnabled) return;
+
+  const source = activeEnvironmentToneSource;
+  const context = canvas.getContext('2d');
+  if (!source?.data || !context) {
+    if (meta) meta.textContent = 'no tone map';
+    return;
+  }
+
+  if (canvas.width !== source.width || canvas.height !== source.height) {
+    canvas.width = source.width;
+    canvas.height = source.height;
+  }
+
+  if (activeEnvironmentToneDebugImageData) {
+    context.putImageData(activeEnvironmentToneDebugImageData, 0, 0);
+  } else {
+    context.clearRect(0, 0, canvas.width, canvas.height);
+  }
+
+  const points = activeEnvironmentToneStats?.samplePoints || [];
+  context.save();
+  context.lineWidth = 1;
+  context.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+  context.fillStyle = 'rgba(255, 67, 67, 0.95)';
+  for (const point of points) {
+    const x = ((point.x + 0.5) % source.width + source.width) % source.width;
+    const y = Math.min(source.height - 1, Math.max(0, point.y + 0.5));
+    context.beginPath();
+    context.arc(x, y, 1.6, 0, Math.PI * 2);
+    context.fill();
+    context.stroke();
+  }
+  context.restore();
+
+  if (meta) {
+    meta.textContent = `${source.width}x${source.height} / ${points.length} pts / ${formatToneValue(getEnvironmentBackgroundExposure())}x`;
+  }
+}
+
 function updateEnvironmentToneForFrame(dimensions, cameraRig, now = performance.now()) {
-  if (adaptiveEnvironmentToneEnabled && drawEnvironment) {
+  if (activeEnvironmentToneSource && (environmentToneDebugEnabled || (adaptiveEnvironmentToneEnabled && drawEnvironment))) {
     activeEnvironmentToneStats = createVisibleEnvironmentToneStats(activeEnvironmentToneSource, dimensions, cameraRig);
+  } else {
+    activeEnvironmentToneStats = null;
   }
 
   if (now - environmentToneLastMetricTime > 250) {
     environmentToneLastMetricTime = now;
     updateEnvironmentToneMetric();
+    renderEnvironmentToneDebug();
   }
 }
 
@@ -2779,6 +2862,7 @@ function createHdrTexture(device, label, hdr, options = {}) {
 
 function createPlaceholderEnvironmentTextures(device) {
   return {
+    environmentToneDebugImageData: null,
     environmentToneSource: null,
     envIrradianceTexture: createPlaceholderTexture(device, 'MaterialX env irradiance placeholder', [0.62, 0.66, 0.68, 1]),
     envRadianceMipCount: 1,
@@ -2797,6 +2881,7 @@ async function createEnvironmentTextures(device, environmentPath = environmentFi
       loadHdrTexture(environmentAssets.radiance),
       loadHdrTexture(environmentAssets.irradiance),
     ]);
+    const environmentToneSource = createEnvironmentToneSource(radiance);
     const envIrradiance = createHdrTexture(device, 'MaterialX env irradiance HDR', irradiance);
     const envRadiance = createHdrTexture(device, 'MaterialX env radiance HDR', radiance, { generateMipmaps: true });
 
@@ -2805,7 +2890,8 @@ async function createEnvironmentTextures(device, environmentPath = environmentFi
     recordDuration('environmentLoad', start);
 
     return {
-      environmentToneSource: createEnvironmentToneSource(radiance),
+      environmentToneDebugImageData: createEnvironmentToneDebugImageData(environmentToneSource),
+      environmentToneSource,
       envIrradianceTexture: envIrradiance.texture,
       envRadianceMipCount: envRadiance.mipLevelCount,
       envRadianceTexture: envRadiance.texture,
@@ -3652,6 +3738,7 @@ function bindEnvironmentControls() {
   const sampleSelect = document.getElementById('env-radiance-samples');
   const intensityInput = document.getElementById('env-light-intensity');
   const adaptiveToneInput = document.getElementById('adaptive-env-tone');
+  const toneDebugInput = document.getElementById('env-tone-debug');
   const drawEnvironmentInput = document.getElementById('draw-environment');
 
   if (sampleSelect) {
@@ -3685,6 +3772,16 @@ function bindEnvironmentControls() {
       adaptiveEnvironmentToneEnabled = adaptiveToneInput.checked;
       updateQueryParam('envTone', adaptiveEnvironmentToneEnabled ? 'adaptive' : 'linear');
       updateEnvironmentToneMetric();
+      renderEnvironmentToneDebug();
+    });
+  }
+
+  if (toneDebugInput) {
+    toneDebugInput.checked = environmentToneDebugEnabled;
+    toneDebugInput.addEventListener('change', () => {
+      environmentToneDebugEnabled = toneDebugInput.checked;
+      updateQueryParam('envToneDebug', environmentToneDebugEnabled ? '1' : '0');
+      renderEnvironmentToneDebug();
     });
   }
 
@@ -3694,10 +3791,12 @@ function bindEnvironmentControls() {
       drawEnvironment = drawEnvironmentInput.checked;
       updateQueryParam('drawEnvironment', drawEnvironment ? '1' : '0');
       updateEnvironmentToneMetric();
+      renderEnvironmentToneDebug();
     });
   }
 
   updateEnvironmentToneMetric();
+  renderEnvironmentToneDebug();
 }
 
 function bindEnvironmentMapSelect(environmentPaths, onEnvironmentChanged) {
@@ -4265,6 +4364,7 @@ async function main() {
   setMetric('mesh', `${geometry.indices.length / 3} triangles`);
   let environmentTextures = await createEnvironmentTextures(device);
   activeEnvironmentToneSource = environmentTextures.environmentToneSource;
+  activeEnvironmentToneDebugImageData = environmentTextures.environmentToneDebugImageData;
   activeEnvironmentToneStats = null;
   await applyEnvironmentLightRig(environmentFilename);
 
@@ -4336,6 +4436,7 @@ async function main() {
     environmentFilename = environmentPath;
     environmentTextures = nextTextures;
     activeEnvironmentToneSource = nextTextures.environmentToneSource;
+    activeEnvironmentToneDebugImageData = nextTextures.environmentToneDebugImageData;
     activeEnvironmentToneStats = null;
     Object.assign(bindGroupResources, environmentTextures);
     bindGroup = await createBindGroupForActiveMaterial(pipeline, activeShaderMode, activeMaterialId);
@@ -4348,6 +4449,7 @@ async function main() {
     });
     updateQueryParam('environment', prettyAssetName(environmentFilename));
     updateEnvironmentToneMetric();
+    renderEnvironmentToneDebug();
     setStatus('Ready');
   });
   const applyPipelineForShaderMode = async (materialId, options = {}) => {
