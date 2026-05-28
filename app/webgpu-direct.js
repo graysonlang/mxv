@@ -57,6 +57,7 @@ const defaultDrawEnvironment = parseBooleanQueryParam(
   false,
 );
 const defaultDirectLightEnabled = parseBooleanQueryParam(queryParams.get('directLight'), true);
+const defaultEnvironmentToneMode = getRequestedEnvironmentToneMode();
 let envRadianceSamples = Number.isFinite(defaultEnvRadianceSamples)
   ? Math.max(0, Math.min(16, Math.round(defaultEnvRadianceSamples)))
   : 4;
@@ -65,12 +66,16 @@ let envLightIntensity = Number.isFinite(defaultEnvLightIntensity)
   : 1;
 let drawEnvironment = defaultDrawEnvironment;
 let directLightEnabled = defaultDirectLightEnabled;
+let adaptiveEnvironmentToneEnabled = defaultEnvironmentToneMode === 'adaptive';
 const privateVertexFloatCount = 48;
 const privatePixelByteLength = 96;
 const maxPublicUniformByteLength = 4096;
 const environmentBackgroundFloatCount = 16;
 const lightDataByteLength = 48;
 const vertexStrideFloats = 11;
+const environmentToneSampleLimit = 65536;
+const environmentToneTargetP95 = 0.72;
+const environmentToneMaxExposure = 32;
 let activeDirectLight = {
   color: [1, 0.894474, 0.567234],
   direction: [0.514434, -0.479014, -0.711269],
@@ -78,6 +83,7 @@ let activeDirectLight = {
   type: 1,
 };
 let activeLightRigPath = '';
+let activeEnvironmentToneStats = null;
 const materialXBoolUniformWarning = 'WGSL does not allow boolean types to be stored in uniform or storage address spaces.';
 const materialXKnownWarnings = new Set();
 let nagaTranslatorPromise;
@@ -614,6 +620,15 @@ fn mx_srgb_encode(linearColor: vec3<f32>) -> vec3<f32> {
   return select(hi, lo, linearColor <= vec3<f32>(0.0031308));
 }
 
+fn mx_aces_tonemap(color: vec3<f32>) -> vec3<f32> {
+  let a = 2.51;
+  let b = 0.03;
+  let c = 2.43;
+  let d = 0.59;
+  let e = 0.14;
+  return clamp((color * (a * color + vec3<f32>(b))) / (color * (c * color + vec3<f32>(d)) + vec3<f32>(e)), vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
 fn mx_latlong_uv(direction: vec3<f32>) -> vec2<f32> {
   let normalizedDirection = normalize(direction);
   let u = atan2(normalizedDirection.x, -normalizedDirection.z) * 0.15915494309189535 + 0.5;
@@ -626,6 +641,7 @@ fn fragmentMain(input: BackgroundVertexOutput) -> @location(0) vec4<f32> {
   let aspect = u_background.params.x;
   let tanHalfFov = u_background.params.y;
   let intensity = u_background.params.z;
+  let adaptiveExposure = u_background.params.w;
   let direction = normalize(
     u_background.cameraForward.xyz +
     u_background.cameraRight.xyz * input.ndc.x * aspect * tanHalfFov +
@@ -634,7 +650,11 @@ fn fragmentMain(input: BackgroundVertexOutput) -> @location(0) vec4<f32> {
   let uv = mx_latlong_uv(direction);
   let rotatedUv = vec2<f32>(fract(uv.x + 0.5), uv.y);
   let color = textureSampleLevel(u_envRadianceTexture, u_envRadianceSampler, rotatedUv, 0.0).rgb * intensity;
-  return vec4<f32>(mx_srgb_encode(max(color, vec3<f32>(0.0))), 1.0);
+  var displayColor = max(color, vec3<f32>(0.0));
+  if (adaptiveExposure > 0.0) {
+    displayColor = mx_aces_tonemap(displayColor * adaptiveExposure);
+  }
+  return vec4<f32>(mx_srgb_encode(displayColor), 1.0);
 }
 `;
 
@@ -743,6 +763,15 @@ function alignTo(value, alignment) {
 function parseBooleanQueryParam(value, fallback = false) {
   if (value == null) return fallback;
   return /^(1|true|yes|on)$/i.test(String(value));
+}
+
+function getRequestedEnvironmentToneMode() {
+  const requested = (queryParams.get('envTone') || queryParams.get('backgroundTone') || '').toLowerCase();
+  if (['adaptive', 'auto'].includes(requested)) return 'adaptive';
+  if (['linear', 'manual', 'off', 'none'].includes(requested)) return 'linear';
+  return parseBooleanQueryParam(queryParams.get('adaptiveEnvTone') || queryParams.get('adaptiveTone'), false)
+    ? 'adaptive'
+    : 'linear';
 }
 
 function getRequestedEnvironmentPath() {
@@ -2253,6 +2282,97 @@ function getEnvironmentAssets(environmentPath) {
   };
 }
 
+function formatToneValue(value) {
+  if (!Number.isFinite(value)) return '-';
+  if (value >= 10) return value.toFixed(1);
+  if (value >= 1) return value.toFixed(2);
+  return value.toPrecision(2);
+}
+
+function createEnvironmentToneStats(hdr) {
+  const pixelCount = hdr.width * hdr.height;
+  const stride = Math.max(1, Math.floor(pixelCount / environmentToneSampleLimit));
+  const luminanceValues = [];
+  let sum = 0;
+  let max = 0;
+
+  for (let pixel = 0; pixel < pixelCount; pixel += stride) {
+    const offset = pixel * 4;
+    const red = halfToFloat(hdr.data[offset]);
+    const green = halfToFloat(hdr.data[offset + 1]);
+    const blue = halfToFloat(hdr.data[offset + 2]);
+    const luminance = red * 0.2126 + green * 0.7152 + blue * 0.0722;
+    if (!Number.isFinite(luminance) || luminance <= 0) continue;
+
+    luminanceValues.push(luminance);
+    sum += luminance;
+    max = Math.max(max, luminance);
+  }
+
+  if (!luminanceValues.length) {
+    return {
+      average: 0,
+      max: 0,
+      p50: 0,
+      p90: 0,
+      p95: 0,
+      p99: 0,
+      sampleCount: 0,
+    };
+  }
+
+  luminanceValues.sort((a, b) => a - b);
+  const percentile = value => luminanceValues[
+    Math.min(luminanceValues.length - 1, Math.max(0, Math.floor((luminanceValues.length - 1) * value)))
+  ];
+
+  return {
+    average: sum / luminanceValues.length,
+    max,
+    p50: percentile(0.5),
+    p90: percentile(0.9),
+    p95: percentile(0.95),
+    p99: percentile(0.99),
+    sampleCount: luminanceValues.length,
+  };
+}
+
+function getEnvironmentBackgroundExposure() {
+  if (!adaptiveEnvironmentToneEnabled || !drawEnvironment || !activeEnvironmentToneStats) return 0;
+  const referenceLuminance = Math.max(
+    activeEnvironmentToneStats.p95,
+    activeEnvironmentToneStats.average,
+    0.0001,
+  );
+  const intensityCompensation = Math.max(envLightIntensity, 0.001);
+  return Math.min(
+    environmentToneMaxExposure,
+    Math.max(0.001, environmentToneTargetP95 / (referenceLuminance * intensityCompensation)),
+  );
+}
+
+function updateEnvironmentToneMetric() {
+  if (!adaptiveEnvironmentToneEnabled) {
+    setMetric('environmentTone', 'manual');
+    return;
+  }
+
+  if (!drawEnvironment) {
+    setMetric('environmentTone', 'adaptive armed / background hidden');
+    return;
+  }
+
+  if (!activeEnvironmentToneStats?.sampleCount) {
+    setMetric('environmentTone', 'adaptive / no HDR stats');
+    return;
+  }
+
+  setMetric(
+    'environmentTone',
+    `adaptive ${formatToneValue(getEnvironmentBackgroundExposure())}x / p95 ${formatToneValue(activeEnvironmentToneStats.p95)}`,
+  );
+}
+
 function sanitizeVector(value, fallback) {
   if (!Array.isArray(value)) return fallback;
   const vector = fallback.map((component, index) => {
@@ -2506,6 +2626,7 @@ function createHdrTexture(device, label, hdr, options = {}) {
 
 function createPlaceholderEnvironmentTextures(device) {
   return {
+    environmentToneStats: null,
     envIrradianceTexture: createPlaceholderTexture(device, 'MaterialX env irradiance placeholder', [0.62, 0.66, 0.68, 1]),
     envRadianceMipCount: 1,
     envRadianceTexture: createPlaceholderTexture(device, 'MaterialX env radiance placeholder', [0.32, 0.36, 0.42, 1]),
@@ -2523,6 +2644,7 @@ async function createEnvironmentTextures(device, environmentPath = environmentFi
       loadHdrTexture(environmentAssets.radiance),
       loadHdrTexture(environmentAssets.irradiance),
     ]);
+    const environmentToneStats = createEnvironmentToneStats(radiance);
     const envIrradiance = createHdrTexture(device, 'MaterialX env irradiance HDR', irradiance);
     const envRadiance = createHdrTexture(device, 'MaterialX env radiance HDR', radiance, { generateMipmaps: true });
 
@@ -2531,6 +2653,7 @@ async function createEnvironmentTextures(device, environmentPath = environmentFi
     recordDuration('environmentLoad', start);
 
     return {
+      environmentToneStats,
       envIrradianceTexture: envIrradiance.texture,
       envRadianceMipCount: envRadiance.mipLevelCount,
       envRadianceTexture: envRadiance.texture,
@@ -2843,7 +2966,7 @@ function writeEnvironmentBackgroundUniforms(backgroundData, dimensions, cameraRi
   backgroundData.set([right[0], right[1], right[2], 0], 0);
   backgroundData.set([up[0], up[1], up[2], 0], 4);
   backgroundData.set([forward[0], forward[1], forward[2], 0], 8);
-  backgroundData.set([aspect, Math.tan(cameraFov / 2), envLightIntensity, 0], 12);
+  backgroundData.set([aspect, Math.tan(cameraFov / 2), envLightIntensity, getEnvironmentBackgroundExposure()], 12);
 }
 
 function createPrivatePixelUniformData() {
@@ -3376,6 +3499,7 @@ function bindRendererModeSelect() {
 function bindEnvironmentControls() {
   const sampleSelect = document.getElementById('env-radiance-samples');
   const intensityInput = document.getElementById('env-light-intensity');
+  const adaptiveToneInput = document.getElementById('adaptive-env-tone');
   const drawEnvironmentInput = document.getElementById('draw-environment');
 
   if (sampleSelect) {
@@ -3399,6 +3523,16 @@ function bindEnvironmentControls() {
         : 1;
       intensityInput.value = String(envLightIntensity);
       updateQueryParam('envIntensity', envLightIntensity);
+      updateEnvironmentToneMetric();
+    });
+  }
+
+  if (adaptiveToneInput) {
+    adaptiveToneInput.checked = adaptiveEnvironmentToneEnabled;
+    adaptiveToneInput.addEventListener('change', () => {
+      adaptiveEnvironmentToneEnabled = adaptiveToneInput.checked;
+      updateQueryParam('envTone', adaptiveEnvironmentToneEnabled ? 'adaptive' : 'linear');
+      updateEnvironmentToneMetric();
     });
   }
 
@@ -3407,8 +3541,11 @@ function bindEnvironmentControls() {
     drawEnvironmentInput.addEventListener('change', () => {
       drawEnvironment = drawEnvironmentInput.checked;
       updateQueryParam('drawEnvironment', drawEnvironment ? '1' : '0');
+      updateEnvironmentToneMetric();
     });
   }
+
+  updateEnvironmentToneMetric();
 }
 
 function bindEnvironmentMapSelect(environmentPaths, onEnvironmentChanged) {
@@ -3975,6 +4112,7 @@ async function main() {
   recordDuration('modelLoad', meshStart);
   setMetric('mesh', `${geometry.indices.length / 3} triangles`);
   let environmentTextures = await createEnvironmentTextures(device);
+  activeEnvironmentToneStats = environmentTextures.environmentToneStats;
   await applyEnvironmentLightRig(environmentFilename);
 
   const privateVertexData = new Float32Array(privateVertexFloatCount);
@@ -4044,6 +4182,7 @@ async function main() {
 
     environmentFilename = environmentPath;
     environmentTextures = nextTextures;
+    activeEnvironmentToneStats = nextTextures.environmentToneStats;
     Object.assign(bindGroupResources, environmentTextures);
     bindGroup = await createBindGroupForActiveMaterial(pipeline, activeShaderMode, activeMaterialId);
     environmentBackgroundBindGroup = createEnvironmentBackgroundBindGroup(device, environmentBackgroundPipeline, bindGroupResources);
@@ -4054,6 +4193,7 @@ async function main() {
       },
     });
     updateQueryParam('environment', prettyAssetName(environmentFilename));
+    updateEnvironmentToneMetric();
     setStatus('Ready');
   });
   const applyPipelineForShaderMode = async (materialId, options = {}) => {

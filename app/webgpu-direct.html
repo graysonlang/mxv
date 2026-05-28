@@ -230,6 +230,25 @@
       min-height: 30px;
     }
 
+    .env-intensity-control {
+      align-items: center;
+      display: grid;
+      gap: 8px;
+      grid-template-columns: minmax(0, 1fr) auto;
+      min-width: 0;
+    }
+
+    .inline-toggle {
+      align-items: center;
+      color: #d6d8ce;
+      display: inline-flex;
+      font: 700 11px/1 ui-sans-serif, system-ui, sans-serif;
+      gap: 5px;
+      min-height: 30px;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
     .property-control {
       align-items: center;
       display: grid;
@@ -415,7 +434,13 @@
       </div>
       <div class="control-row">
         <label class="label" for="env-light-intensity">Env Intensity</label>
-        <input id="env-light-intensity" name="env-light-intensity" type="number" min="0" max="8" step="0.25" />
+        <span class="env-intensity-control">
+          <input id="env-light-intensity" name="env-light-intensity" type="number" min="0" max="8" step="0.25" />
+          <label class="inline-toggle" for="adaptive-env-tone">
+            <input id="adaptive-env-tone" name="adaptive-env-tone" type="checkbox" />
+            <span>Adaptive</span>
+          </label>
+        </span>
       </div>
       <div class="control-row">
         <label class="label" for="draw-environment">Environment</label>
@@ -516,6 +541,10 @@
       <div class="metric-row">
         <span class="label">Env Size</span>
         <span class="value" data-metric="environmentSize">-</span>
+      </div>
+      <div class="metric-row">
+        <span class="label">Env Tone</span>
+        <span class="value" data-metric="environmentTone">-</span>
       </div>
       <div class="metric-row">
         <span class="label">Model</span>
