@@ -13,6 +13,7 @@ import {
   setMaterialPropertyValue,
   summarizeMaterialPropertySupport,
 } from './material-properties.js';
+import { loadAssetManifest } from '../src/index.js';
 import { createNagaTranslator, nagaVersion } from '@graysonlang/naga';
 
 export function getFilePaths() {
@@ -84,7 +85,8 @@ let fallbackRouting = false;
 if (typeof window !== 'undefined') {
   window.__mxvWebGpuErrors = webGpuErrors;
 }
-const requestedEnvironment = queryParams.get('environment') || queryParams.get('env') || defaultEnvironment;
+let environmentFilename = getRequestedEnvironmentPath();
+let materialXResourcePaths = [];
 
 const materialPortIndex = {
   base: 0,
@@ -740,6 +742,10 @@ function alignTo(value, alignment) {
 function parseBooleanQueryParam(value, fallback = false) {
   if (value == null) return fallback;
   return /^(1|true|yes|on)$/i.test(String(value));
+}
+
+function getRequestedEnvironmentPath() {
+  return queryParams.get('environment') || queryParams.get('env') || defaultEnvironment;
 }
 
 function getUniformTypeLayout(type) {
@@ -2068,6 +2074,20 @@ function prettyAssetName(path) {
     .replace(/\b\w/g, character => character.toUpperCase());
 }
 
+function assetNameKey(path) {
+  return prettyAssetName(String(path || '').trim()).toLocaleLowerCase();
+}
+
+function resolveAssetPath(paths, requested, fallback) {
+  if (paths.includes(requested)) return requested;
+
+  const requestedKey = assetNameKey(requested);
+  const matchedPath = paths.find(path => assetNameKey(path) === requestedKey);
+  if (matchedPath) return matchedPath;
+
+  return paths.includes(fallback) ? fallback : paths[0] || '';
+}
+
 function prettyGeometryName(path) {
   return prettyAssetName(path);
 }
@@ -2163,6 +2183,40 @@ async function loadMaterialTextureBindings(textureCache, sample) {
 
 function getEnvironmentIrradiancePath(environmentPath) {
   return environmentPath.replace('/Lights/', '/Lights/irradiance/');
+}
+
+function getEnvironmentPaths() {
+  return materialXResourcePaths
+    .filter(path => path.includes('/Lights/') && !path.includes('/Lights/irradiance/') && path.endsWith('.hdr'))
+    .sort((a, b) => prettyAssetName(a).localeCompare(prettyAssetName(b)));
+}
+
+function getEnvironmentAssets(environmentPath) {
+  const irradiancePath = getEnvironmentIrradiancePath(environmentPath);
+  const fallbackIrradiancePath = getEnvironmentIrradiancePath(defaultEnvironment);
+
+  return {
+    irradiance: materialXResourcePaths.length && !materialXResourcePaths.includes(irradiancePath)
+      ? fallbackIrradiancePath
+      : irradiancePath,
+    radiance: environmentPath,
+  };
+}
+
+async function initializeAssetManifest() {
+  try {
+    const manifest = await loadAssetManifest();
+    materialXResourcePaths = Array.isArray(manifest.materialXResourcePaths)
+      ? manifest.materialXResourcePaths
+      : [];
+  } catch (error) {
+    console.warn('Could not load MaterialX asset manifest; using direct viewer defaults.', error);
+    materialXResourcePaths = [];
+  }
+
+  const environmentPaths = getEnvironmentPaths();
+  environmentFilename = resolveAssetPath(environmentPaths, environmentFilename, defaultEnvironment) || defaultEnvironment;
+  return environmentPaths.length ? environmentPaths : [environmentFilename];
 }
 
 function halfToFloat(value) {
@@ -2339,15 +2393,16 @@ function createPlaceholderEnvironmentTextures(device) {
   };
 }
 
-async function createEnvironmentTextures(device) {
+async function createEnvironmentTextures(device, environmentPath = environmentFilename) {
   const start = performance.now();
-  const environmentLabel = prettyAssetName(requestedEnvironment);
+  const environmentLabel = prettyAssetName(environmentPath);
+  const environmentAssets = getEnvironmentAssets(environmentPath);
 
   try {
     setStatus(`Loading environment: ${environmentLabel}`);
     const [radiance, irradiance] = await Promise.all([
-      loadHdrTexture(requestedEnvironment),
-      loadHdrTexture(getEnvironmentIrradiancePath(requestedEnvironment)),
+      loadHdrTexture(environmentAssets.radiance),
+      loadHdrTexture(environmentAssets.irradiance),
     ]);
     const envIrradiance = createHdrTexture(device, 'MaterialX env irradiance HDR', irradiance);
     const envRadiance = createHdrTexture(device, 'MaterialX env radiance HDR', radiance, { generateMipmaps: true });
@@ -3237,6 +3292,51 @@ function bindEnvironmentControls() {
   }
 }
 
+function bindEnvironmentMapSelect(environmentPaths, onEnvironmentChanged) {
+  const select = document.getElementById('environment-map');
+  if (!select) {
+    return {
+      refresh: () => {},
+      setDisabled: () => {},
+    };
+  }
+
+  const paths = environmentPaths.length ? environmentPaths : [environmentFilename];
+  const refresh = () => {
+    select.replaceChildren();
+    for (const path of paths) {
+      const option = document.createElement('option');
+      option.value = path;
+      option.textContent = prettyAssetName(path);
+      select.append(option);
+    }
+    select.value = paths.includes(environmentFilename) ? environmentFilename : paths[0] || '';
+  };
+
+  const setDisabled = (disabled) => {
+    select.disabled = disabled;
+  };
+
+  select.addEventListener('change', () => {
+    const selectedEnvironment = select.value;
+    setDisabled(true);
+    Promise.resolve(onEnvironmentChanged?.(selectedEnvironment))
+      .catch((error) => {
+        console.warn('Environment update failed.', error);
+        setMetric('environmentLoad', error?.message || String(error));
+        setStatus('Environment update failed');
+        select.value = paths.includes(environmentFilename) ? environmentFilename : paths[0] || '';
+      })
+      .finally(() => setDisabled(false));
+  });
+
+  refresh();
+  return {
+    refresh,
+    setDisabled,
+  };
+}
+
 function bindDirectLightControls() {
   const directLightInput = document.getElementById('direct-light');
   setMetric('directLight', describeDirectLight());
@@ -3735,6 +3835,8 @@ async function main() {
     throw new Error('Could not create a WebGPU canvas context.');
   }
 
+  setStatus('Loading viewer assets');
+  const environmentPaths = await initializeAssetManifest();
   setStatus('Requesting WebGPU device');
   const { device } = await createDevice();
   installWebGpuErrorReporting(device);
@@ -3753,7 +3855,7 @@ async function main() {
   setMetric('model', geometry.label);
   recordDuration('modelLoad', meshStart);
   setMetric('mesh', `${geometry.indices.length / 3} triangles`);
-  const environmentTextures = await createEnvironmentTextures(device);
+  let environmentTextures = await createEnvironmentTextures(device);
 
   const privateVertexData = new Float32Array(privateVertexFloatCount);
   const privatePixelData = createPrivatePixelUniformData();
@@ -3810,10 +3912,24 @@ async function main() {
     });
   };
   let bindGroup = await createBindGroupForActiveMaterial();
-  const environmentBackgroundBindGroup = createEnvironmentBackgroundBindGroup(device, environmentBackgroundPipeline, bindGroupResources);
+  let environmentBackgroundBindGroup = createEnvironmentBackgroundBindGroup(device, environmentBackgroundPipeline, bindGroupResources);
   let pipelineSwitchId = 0;
+  let environmentSwitchId = 0;
   bindEnvironmentControls();
   bindDirectLightControls();
+  bindEnvironmentMapSelect(environmentPaths, async (environmentPath) => {
+    const switchId = ++environmentSwitchId;
+    const nextTextures = await createEnvironmentTextures(device, environmentPath);
+    if (switchId !== environmentSwitchId) return;
+
+    environmentFilename = environmentPath;
+    environmentTextures = nextTextures;
+    Object.assign(bindGroupResources, environmentTextures);
+    bindGroup = await createBindGroupForActiveMaterial(pipeline, activeShaderMode, activeMaterialId);
+    environmentBackgroundBindGroup = createEnvironmentBackgroundBindGroup(device, environmentBackgroundPipeline, bindGroupResources);
+    updateQueryParam('environment', prettyAssetName(environmentFilename));
+    setStatus('Ready');
+  });
   const applyPipelineForShaderMode = async (materialId, options = {}) => {
     const switchId = ++pipelineSwitchId;
     const material = materialSamples[materialId] || materialSamples.standard;
