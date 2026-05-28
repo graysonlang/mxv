@@ -75,7 +75,7 @@ let environmentToneDebugEnabled = defaultEnvironmentToneDebugEnabled;
 const privateVertexFloatCount = 48;
 const privatePixelByteLength = 96;
 const maxPublicUniformByteLength = 4096;
-const environmentBackgroundFloatCount = 16;
+const environmentBackgroundFloatCount = 20;
 const lightDataByteLength = 48;
 const vertexStrideFloats = 11;
 const environmentToneSampleCount = 89;
@@ -85,6 +85,10 @@ const environmentToneMapHeight = 64;
 const environmentToneBlurPasses = 2;
 const environmentToneTargetP95 = 0.72;
 const environmentToneMaxExposure = 32;
+const environmentTonePlateauStops = 0.2;
+const environmentToneKneeStops = 0.75;
+const environmentToneHighlightStartStops = 1.5;
+const environmentToneHighlightEndStops = 3.0;
 let activeDirectLight = {
   color: [1, 0.894474, 0.567234],
   direction: [0.514434, -0.479014, -0.711269],
@@ -601,6 +605,7 @@ struct EnvironmentBackgroundUniforms {
   cameraUp: vec4<f32>,
   cameraForward: vec4<f32>,
   params: vec4<f32>,
+  toneParams: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> u_background: EnvironmentBackgroundUniforms;
@@ -653,7 +658,8 @@ fn fragmentMain(input: BackgroundVertexOutput) -> @location(0) vec4<f32> {
   let aspect = u_background.params.x;
   let tanHalfFov = u_background.params.y;
   let intensity = u_background.params.z;
-  let adaptiveExposure = u_background.params.w;
+  let adaptiveExposure = u_background.toneParams.x;
+  let adaptiveStrength = clamp(u_background.toneParams.y, 0.0, 1.0);
   let direction = normalize(
     u_background.cameraForward.xyz +
     u_background.cameraRight.xyz * input.ndc.x * aspect * tanHalfFov +
@@ -663,8 +669,9 @@ fn fragmentMain(input: BackgroundVertexOutput) -> @location(0) vec4<f32> {
   let rotatedUv = vec2<f32>(fract(uv.x + 0.5), uv.y);
   let color = textureSampleLevel(u_envRadianceTexture, u_envRadianceSampler, rotatedUv, 0.0).rgb * intensity;
   var displayColor = max(color, vec3<f32>(0.0));
-  if (adaptiveExposure > 0.0) {
-    displayColor = mx_aces_tonemap(displayColor * adaptiveExposure);
+  if (adaptiveExposure > 0.0 && adaptiveStrength > 0.0) {
+    let adaptedDisplayColor = mx_aces_tonemap(displayColor * adaptiveExposure);
+    displayColor = mix(displayColor, adaptedDisplayColor, adaptiveStrength);
   }
   return vec4<f32>(mx_srgb_encode(displayColor), 1.0);
 }
@@ -2518,18 +2525,55 @@ function createVisibleEnvironmentToneStats(source, dimensions, cameraRig) {
   };
 }
 
-function getEnvironmentBackgroundExposure() {
-  if (!adaptiveEnvironmentToneEnabled || !drawEnvironment || !activeEnvironmentToneStats) return 0;
+function smoothstep(edge0, edge1, value) {
+  if (edge0 === edge1) return value < edge0 ? 0 : 1;
+  const t = Math.min(1, Math.max(0, (value - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+
+function getEnvironmentBackgroundTone() {
+  if (!adaptiveEnvironmentToneEnabled || !drawEnvironment || !activeEnvironmentToneStats?.sampleCount) {
+    return {
+      exposure: 0,
+      highlightStrength: 0,
+      rawExposure: 0,
+      strength: 0,
+      stops: 0,
+    };
+  }
+
   const referenceLuminance = Math.max(
     activeEnvironmentToneStats.p95,
     activeEnvironmentToneStats.average,
     0.0001,
   );
   const intensityCompensation = Math.max(envLightIntensity, 0.001);
-  return Math.min(
+  const rawExposure = environmentToneTargetP95 / (referenceLuminance * intensityCompensation);
+  const exposure = Math.min(
     environmentToneMaxExposure,
-    Math.max(0.001, environmentToneTargetP95 / (referenceLuminance * intensityCompensation)),
+    Math.max(0.001, rawExposure),
   );
+  const stops = Math.log2(exposure);
+  const exposureStrength = smoothstep(
+    environmentTonePlateauStops,
+    environmentTonePlateauStops + environmentToneKneeStops,
+    Math.abs(stops),
+  );
+  const highlightRatio = Math.max(activeEnvironmentToneStats.p99, 0.0001) / referenceLuminance;
+  const highlightStops = Math.max(0, Math.log2(highlightRatio));
+  const highlightStrength = smoothstep(
+    environmentToneHighlightStartStops,
+    environmentToneHighlightEndStops,
+    highlightStops,
+  );
+
+  return {
+    exposure,
+    highlightStrength,
+    rawExposure,
+    strength: Math.max(exposureStrength, highlightStrength),
+    stops,
+  };
 }
 
 function updateEnvironmentToneMetric() {
@@ -2548,9 +2592,10 @@ function updateEnvironmentToneMetric() {
     return;
   }
 
+  const tone = getEnvironmentBackgroundTone();
   setMetric(
     'environmentTone',
-    `adaptive ${formatToneValue(getEnvironmentBackgroundExposure())}x / smooth view p95 ${formatToneValue(activeEnvironmentToneStats.p95)}`,
+    `adaptive ${formatToneValue(tone.exposure)}x / blend ${Math.round(tone.strength * 100)}% / smooth view p95 ${formatToneValue(activeEnvironmentToneStats.p95)}`,
   );
 }
 
@@ -2597,7 +2642,8 @@ function renderEnvironmentToneDebug() {
   context.restore();
 
   if (meta) {
-    meta.textContent = `${source.width}x${source.height} / ${points.length} pts / ${formatToneValue(getEnvironmentBackgroundExposure())}x`;
+    const tone = getEnvironmentBackgroundTone();
+    meta.textContent = `${source.width}x${source.height} / ${points.length} pts / ${formatToneValue(tone.exposure)}x / ${Math.round(tone.strength * 100)}%`;
   }
 }
 
@@ -3206,11 +3252,13 @@ function writeEnvironmentBackgroundUniforms(backgroundData, dimensions, cameraRi
   const right = [elements[0], elements[1], elements[2]];
   const up = [elements[4], elements[5], elements[6]];
   const forward = [-elements[8], -elements[9], -elements[10]];
+  const tone = getEnvironmentBackgroundTone();
 
   backgroundData.set([right[0], right[1], right[2], 0], 0);
   backgroundData.set([up[0], up[1], up[2], 0], 4);
   backgroundData.set([forward[0], forward[1], forward[2], 0], 8);
-  backgroundData.set([aspect, Math.tan(cameraFov / 2), envLightIntensity, getEnvironmentBackgroundExposure()], 12);
+  backgroundData.set([aspect, Math.tan(cameraFov / 2), envLightIntensity, 0], 12);
+  backgroundData.set([tone.exposure, tone.strength, tone.highlightStrength, tone.stops], 16);
 }
 
 function createPrivatePixelUniformData() {
