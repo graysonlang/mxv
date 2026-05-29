@@ -21,6 +21,7 @@ export function getFilePaths() {
 }
 
 const defaultGeometry = 'vendor/MaterialX/resources/Geometry/shaderball.glb';
+const defaultShaderballAo = 'vendor/MaterialX/resources/Geometry/shaderball_ao.png';
 const defaultEnvironment = 'vendor/MaterialX/resources/Lights/san_giuseppe_bridge_split.hdr';
 const defaultLightRig = 'vendor/MaterialX/resources/Lights/san_giuseppe_bridge_split.mtlx';
 const runtimeBaseUrl = new URL('./vendor/materialx-runtime/', import.meta.url);
@@ -57,6 +58,7 @@ const defaultDrawEnvironment = parseBooleanQueryParam(
   false,
 );
 const defaultDirectLightEnabled = parseBooleanQueryParam(queryParams.get('directLight'), true);
+const defaultShaderballAoStrength = Number(queryParams.get('shaderballAo') || queryParams.get('ao') || 1);
 const defaultEnvironmentToneMode = getRequestedEnvironmentToneMode();
 const defaultEnvironmentToneDebugEnabled = parseBooleanQueryParam(
   queryParams.get('envToneDebug') || queryParams.get('toneDebug'),
@@ -70,6 +72,9 @@ let envLightIntensity = Number.isFinite(defaultEnvLightIntensity)
   : 1;
 let drawEnvironment = defaultDrawEnvironment;
 let directLightEnabled = defaultDirectLightEnabled;
+let shaderballAoStrength = Number.isFinite(defaultShaderballAoStrength)
+  ? Math.max(0, Math.min(1, defaultShaderballAoStrength))
+  : 1;
 let adaptiveEnvironmentToneEnabled = defaultEnvironmentToneMode === 'adaptive';
 let environmentToneDebugEnabled = defaultEnvironmentToneDebugEnabled;
 const privateVertexFloatCount = 48;
@@ -1407,6 +1412,25 @@ function extractTextureBindings(source, generatedPorts) {
     .filter(binding => binding && Number.isFinite(binding.samplerBinding));
 }
 
+function createShaderballAoBindingPlan(textureBindings, lightDataBinding) {
+  const occupiedBindings = [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    lightDataBinding ?? 7,
+    ...textureBindings.flatMap(binding => [binding.textureBinding, binding.samplerBinding]),
+  ].filter(Number.isFinite);
+  const textureBinding = Math.max(...occupiedBindings) + 1;
+  return {
+    samplerBinding: textureBinding + 1,
+    textureBinding,
+  };
+}
+
 function createGeneratedUniformValues(generatedPorts) {
   const values = {};
   for (const port of generatedPorts) {
@@ -1768,6 +1792,8 @@ async function generateMaterialSample(mx, sampleId, lightRigXml, nagaTranslator)
   const generatedPorts = getBlockPorts(publicUniforms);
   const textureBindings = extractTextureBindings(pixelSource, generatedPorts);
   const bridgeCompatible = textureBindings.length === 0;
+  const lightDataBinding = extractLightDataBinding(pixelSource);
+  const shaderballAoBinding = createShaderballAoBindingPlan(textureBindings, lightDataBinding);
   if (bridgeCompatible) {
     validateGeneratedPublicUniforms(generatedPorts, sampleId);
   }
@@ -1790,9 +1816,10 @@ async function generateMaterialSample(mx, sampleId, lightRigXml, nagaTranslator)
     bridgeCompatible,
     label: fallback.label,
     lightData,
-    lightDataBinding: extractLightDataBinding(pixelSource),
+    lightDataBinding,
     ports,
     renderable: element.getNamePath(),
+    shaderballAoBinding,
     source: 'shadergen',
     target: typeof generator.getTarget === 'function' ? generator.getTarget() : 'unknown',
     pixelContract,
@@ -2109,7 +2136,10 @@ async function loadShaderballGeometry() {
   const loader = new GLTFLoader();
   const gltf = await loader.loadAsync(geometryUrl);
   const geometries = collectMeshGeometries(gltf.scene);
-  return packGeometries(geometries, prettyGeometryName(geometryUrl));
+  return {
+    ...packGeometries(geometries, prettyGeometryName(geometryUrl)),
+    usesShaderballAo: isShaderballGeometryPath(geometryUrl),
+  };
 }
 
 async function loadGeometry() {
@@ -2122,6 +2152,7 @@ async function loadGeometry() {
     return {
       ...createSphereGeometry(),
       label: 'Generated sphere',
+      usesShaderballAo: false,
     };
   }
 }
@@ -2151,6 +2182,10 @@ function resolveAssetPath(paths, requested, fallback) {
 
 function prettyGeometryName(path) {
   return prettyAssetName(path);
+}
+
+function isShaderballGeometryPath(path) {
+  return /(?:^|\/)shaderball\.glb$/i.test(String(path || ''));
 }
 
 function createBuffer(device, label, data, usage) {
@@ -2214,6 +2249,41 @@ async function loadImageTexture(device, url, label) {
   );
   bitmap.close?.();
   return texture;
+}
+
+async function createShaderballAoResources(device, enabled) {
+  const sampler = device.createSampler({
+    addressModeU: 'repeat',
+    addressModeV: 'repeat',
+    magFilter: 'linear',
+    minFilter: 'linear',
+    mipmapFilter: 'linear',
+  });
+  const fallbackTexture = createPlaceholderTexture(device, 'Shaderball AO disabled texture', [1, 1, 1, 1]);
+
+  if (!enabled || shaderballAoStrength <= 0) {
+    setMetric('shaderballAO', 'disabled');
+    return {
+      shaderballAoSampler: sampler,
+      shaderballAoTexture: fallbackTexture,
+    };
+  }
+
+  try {
+    const texture = await loadImageTexture(device, defaultShaderballAo, 'Shaderball ambient occlusion texture');
+    setMetric('shaderballAO', `${prettyAssetName(defaultShaderballAo)} / ${Math.round(shaderballAoStrength * 100)}%`);
+    return {
+      shaderballAoSampler: sampler,
+      shaderballAoTexture: texture,
+    };
+  } catch (error) {
+    console.warn('Could not load shaderball ambient occlusion texture.', error);
+    setMetric('shaderballAO', 'missing');
+    return {
+      shaderballAoSampler: sampler,
+      shaderballAoTexture: fallbackTexture,
+    };
+  }
 }
 
 function createMaterialTextureCache(device) {
@@ -3125,18 +3195,28 @@ async function createPipeline(device, format, options = {}) {
 
 function createVertexBufferLayout(layout = 'standard') {
   const floatSize = Float32Array.BYTES_PER_ELEMENT;
-  const attributes = layout === 'textured'
-    ? [
-        { format: 'float32x3', offset: 0, shaderLocation: 0 },
-        { format: 'float32x2', offset: 9 * floatSize, shaderLocation: 1 },
-        { format: 'float32x3', offset: 3 * floatSize, shaderLocation: 2 },
-        { format: 'float32x3', offset: 6 * floatSize, shaderLocation: 3 },
-      ]
-    : [
-        { format: 'float32x3', offset: 0, shaderLocation: 0 },
-        { format: 'float32x3', offset: 3 * floatSize, shaderLocation: 1 },
-        { format: 'float32x3', offset: 6 * floatSize, shaderLocation: 2 },
-      ];
+  let attributes;
+  if (layout === 'textured') {
+    attributes = [
+      { format: 'float32x3', offset: 0, shaderLocation: 0 },
+      { format: 'float32x2', offset: 9 * floatSize, shaderLocation: 1 },
+      { format: 'float32x3', offset: 3 * floatSize, shaderLocation: 2 },
+      { format: 'float32x3', offset: 6 * floatSize, shaderLocation: 3 },
+    ];
+  } else if (layout === 'standardAo') {
+    attributes = [
+      { format: 'float32x3', offset: 0, shaderLocation: 0 },
+      { format: 'float32x3', offset: 3 * floatSize, shaderLocation: 1 },
+      { format: 'float32x3', offset: 6 * floatSize, shaderLocation: 2 },
+      { format: 'float32x2', offset: 9 * floatSize, shaderLocation: 3 },
+    ];
+  } else {
+    attributes = [
+      { format: 'float32x3', offset: 0, shaderLocation: 0 },
+      { format: 'float32x3', offset: 3 * floatSize, shaderLocation: 1 },
+      { format: 'float32x3', offset: 6 * floatSize, shaderLocation: 2 },
+    ];
+  }
 
   return {
     arrayStride: vertexStrideFloats * floatSize,
@@ -4128,7 +4208,7 @@ function encodeNagaFragmentOutput(source) {
   const pattern = /(\n\s*)return FragmentOutput\(([^)]+)\);(\n\})\s*$/;
   const adapted = source.replace(pattern, (match, indent, outputExpression, suffix) => {
     const output = outputExpression.trim();
-    return `${indent}let mxv_encodedOutput = vec4<f32>(mx_srgb_encode(max(${output}.rgb, vec3<f32>(0.0))), ${output}.a);${indent}return FragmentOutput(mxv_encodedOutput);${suffix}`;
+    return `${indent}let mxv_linearOutput = max(${output}.rgb, vec3<f32>(0.0));${indent}let mxv_encodedOutput = vec4<f32>(mx_srgb_encode(mxv_linearOutput), ${output}.a);${indent}return FragmentOutput(mxv_encodedOutput);${suffix}`;
   });
 
   if (adapted === source) {
@@ -4136,6 +4216,95 @@ function encodeNagaFragmentOutput(source) {
   }
 
   return adapted;
+}
+
+function splitWgslArguments(source) {
+  const args = [];
+  let depth = 0;
+  let start = 0;
+  for (let index = 0; index < source.length; index++) {
+    const character = source[index];
+    if (character === '(' || character === '[' || character === '<') depth++;
+    if (character === ')' || character === ']' || character === '>') depth--;
+    if (character === ',' && depth === 0) {
+      args.push(source.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+  args.push(source.slice(start).trim());
+  return args.filter(Boolean);
+}
+
+function injectShaderballAoVertexUv(source) {
+  if (/shaderballAoUv/.test(source) || /texcoord_0_:\s*vec2<f32>/.test(source)) return source;
+
+  const withOutput = source.replace(
+    /(struct VertexOutput\s*\{[\s\S]*?@location\(2\)\s+positionWorld:\s+vec3<f32>,\n)/,
+    '$1    @location(3) shaderballAoUv: vec2<f32>,\n',
+  );
+  const withInput = withOutput.replace(
+    /fn main\(@location\(0\)\s+i_position:\s+vec3<f32>,\s+@location\(1\)\s+i_normal:\s+vec3<f32>,\s+@location\(2\)\s+i_tangent:\s+vec3<f32>\)/,
+    'fn main(@location(0) i_position: vec3<f32>, @location(1) i_normal: vec3<f32>, @location(2) i_tangent: vec3<f32>, @location(3) mxv_shaderball_uv: vec2<f32>)',
+  );
+  const withReturn = withInput.replace(/return VertexOutput\(([^;]+)\);/, (match, argsSource) => {
+    const args = splitWgslArguments(argsSource);
+    if (args.length < 2) return match;
+    const builtinPosition = args.pop();
+    return `return VertexOutput(${[...args, 'mxv_shaderball_uv', builtinPosition].join(', ')});`;
+  });
+
+  if (withReturn === source || !/shaderballAoUv/.test(withReturn) || !/mxv_shaderball_uv/.test(withReturn)) {
+    throw new Error('Could not inject shaderball AO UVs into generated Naga vertex shader.');
+  }
+
+  return withReturn;
+}
+
+function injectShaderballAoFragment(source, shaderballAoBinding, uvName) {
+  if (/mxv_shaderballAoTexture/.test(source)) return source;
+
+  const withBindings = source.replace(
+    /(var<private>\s+vd:\s+VertexData;)/,
+    `@group(0) @binding(${shaderballAoBinding.textureBinding})\nvar mxv_shaderballAoTexture: texture_2d<f32>;\n@group(0) @binding(${shaderballAoBinding.samplerBinding})\nvar mxv_shaderballAoSampler: sampler;\n$1`,
+  );
+  const withUvInput = uvName === 'mxv_shaderball_uv'
+    ? withBindings.replace(
+        /fn main\(([\s\S]*?@location\(2\)\s+positionWorld:\s+vec3<f32>)\)\s*->\s*FragmentOutput/,
+        'fn main($1, @location(3) mxv_shaderball_uv: vec2<f32>) -> FragmentOutput',
+      )
+    : withBindings;
+  const strength = shaderballAoStrength.toFixed(3);
+  const withOutput = withUvInput.replace(
+    /return FragmentOutput\(mxv_encodedOutput\);/,
+    `let mxv_shaderballAo = textureSample(mxv_shaderballAoTexture, mxv_shaderballAoSampler, ${uvName}).r;\n    let mxv_shaderballAoFactor = mix(1.0, clamp(mxv_shaderballAo, 0.0, 1.0), ${strength});\n    return FragmentOutput(vec4<f32>(mx_srgb_encode(mxv_linearOutput * mxv_shaderballAoFactor), mxv_encodedOutput.a));`,
+  );
+
+  if (withOutput === source || !/mxv_shaderballAoTexture/.test(withOutput) || !/mxv_shaderballAoFactor/.test(withOutput)) {
+    throw new Error('Could not inject shaderball AO sampling into generated Naga fragment shader.');
+  }
+
+  return withOutput;
+}
+
+function applyShaderballAoToNagaShaders(loaded, material) {
+  const shaderballAoBinding = material?.shaderballAoBinding;
+  if (!shaderballAoBinding || shaderballAoStrength <= 0) return loaded;
+
+  const usesTexcoord = material?.usesTexcoord || /@location\(0\)\s+texcoord_0_:\s+vec2<f32>/.test(loaded.fragmentSource);
+  const uvName = usesTexcoord ? 'texcoord_0_' : 'mxv_shaderball_uv';
+  const vertexSource = usesTexcoord
+    ? loaded.vertexSource
+    : injectShaderballAoVertexUv(loaded.vertexSource);
+  const fragmentSource = injectShaderballAoFragment(loaded.fragmentSource, shaderballAoBinding, uvName);
+
+  return {
+    ...loaded,
+    fragmentLineCount: fragmentSource.split('\n').length,
+    fragmentSource,
+    usesShaderballAo: true,
+    vertexLineCount: vertexSource.split('\n').length,
+    vertexSource,
+  };
 }
 
 async function loadNagaShaderPair(materialId) {
@@ -4172,11 +4341,14 @@ async function loadNagaShaderPair(materialId) {
 
 async function createNagaPipeline(device, format, materialId) {
   const loadStart = performance.now();
-  const loaded = await loadNagaShaderPair(materialId);
-  const material = materialSamples[loaded.sampleId] || materialSamples.standard;
+  const loadedSource = await loadNagaShaderPair(materialId);
+  const material = materialSamples[loadedSource.sampleId] || materialSamples.standard;
+  const loaded = applyShaderballAoToNagaShaders(loadedSource, material);
   const vertexLayout = material?.usesTexcoord || /@location\(1\)\s+\w*texcoord/i.test(loaded.vertexSource)
     ? 'textured'
-    : 'standard';
+    : loaded.usesShaderballAo
+      ? 'standardAo'
+      : 'standard';
   setMetric('shaderSource', `Naga ${loaded.vertexLineCount}v / ${loaded.fragmentLineCount}p lines`);
 
   const pipeline = await createPipeline(device, format, {
@@ -4195,7 +4367,12 @@ async function createNagaPipeline(device, format, materialId) {
     ? `runtime Naga ${nagaVersion} / ${formatDuration(loaded.translationDuration)}`
     : `Naga fixture / ${formatDuration(performance.now() - loadStart)}`;
   setMetric('fragmentTranslator', translationDetail);
-  setMetric('shaderNotes', materialXKnownWarnings.size ? 'bool uniform mapped / Naga translated' : 'Naga translated');
+  const notes = [
+    materialXKnownWarnings.size ? 'bool uniform mapped' : '',
+    'Naga translated',
+    loaded.usesShaderballAo ? 'shaderball AO' : '',
+  ].filter(Boolean);
+  setMetric('shaderNotes', notes.join(' / '));
   return pipeline;
 }
 
@@ -4208,9 +4385,13 @@ function describeBindingContract(sample) {
         binding.samplerBinding,
       ]))
     : 7;
-  const upperBinding = Math.max(lightBinding, textureUpperBinding);
+  const aoUpperBinding = shaderballAoStrength > 0 && sample.shaderballAoBinding
+    ? sample.shaderballAoBinding.samplerBinding
+    : 7;
+  const upperBinding = Math.max(lightBinding, textureUpperBinding, aoUpperBinding);
   const textureDetail = textureCount ? ` / ${textureCount} texture${textureCount === 1 ? '' : 's'}` : '';
-  return `bindings 0-${upperBinding}${textureDetail} / ${sample.privateUniformCount} private ports / ${privatePixelByteLength} B`;
+  const aoDetail = aoUpperBinding > 7 ? ' / shaderball AO' : '';
+  return `bindings 0-${upperBinding}${textureDetail}${aoDetail} / ${sample.privateUniformCount} private ports / ${privatePixelByteLength} B`;
 }
 
 function updateBridgeShaderMetrics(sample) {
@@ -4368,6 +4549,9 @@ function createDirectBindGroup(device, pipeline, resources) {
   const sample = resources.sample || materialSamples.standard;
   const materialTextures = shaderMode === 'naga' ? resources.materialTextures || [] : [];
   const lightDataBinding = shaderMode === 'naga' ? sample.lightDataBinding ?? 7 : 7;
+  const shaderballAoBinding = shaderMode === 'naga' && shaderballAoStrength > 0
+    ? sample.shaderballAoBinding
+    : null;
   const textureEntries = materialTextures.flatMap(binding => [
     {
       binding: binding.textureBinding,
@@ -4378,6 +4562,18 @@ function createDirectBindGroup(device, pipeline, resources) {
       resource: resources.materialSampler,
     },
   ]);
+  const shaderballAoEntries = shaderballAoBinding && resources.shaderballAoTexture && resources.shaderballAoSampler
+    ? [
+        {
+          binding: shaderballAoBinding.textureBinding,
+          resource: resources.shaderballAoTexture.createView(),
+        },
+        {
+          binding: shaderballAoBinding.samplerBinding,
+          resource: resources.shaderballAoSampler,
+        },
+      ]
+    : [];
 
   return device.createBindGroup({
     entries: [
@@ -4410,6 +4606,7 @@ function createDirectBindGroup(device, pipeline, resources) {
         resource: { buffer: resources.publicUniformBuffer },
       },
       ...textureEntries,
+      ...shaderballAoEntries,
       {
         binding: lightDataBinding,
         resource: { buffer: resources.lightDataBuffer },
@@ -4466,6 +4663,7 @@ async function main() {
   setMetric('model', geometry.label);
   recordDuration('modelLoad', meshStart);
   setMetric('mesh', `${geometry.indices.length / 3} triangles`);
+  const shaderballAoResources = await createShaderballAoResources(device, geometry.usesShaderballAo);
   let environmentTextures = await createEnvironmentTextures(device);
   activeEnvironmentToneSource = environmentTextures.environmentToneSource;
   activeEnvironmentToneDebugImageData = environmentTextures.environmentToneDebugImageData;
@@ -4509,6 +4707,7 @@ async function main() {
     privatePixelBuffer,
     privateVertexBuffer,
     publicUniformBuffer,
+    ...shaderballAoResources,
   };
   const createBindGroupForActiveMaterial = async (
     targetPipeline = pipeline,
