@@ -83,12 +83,17 @@ const environmentToneGoldenAngle = Math.PI * (3 - Math.sqrt(5));
 const environmentToneMapWidth = 128;
 const environmentToneMapHeight = 64;
 const environmentToneBlurPasses = 2;
-const environmentToneTargetP95 = 0.72;
+const environmentToneTargetP95 = 0.32;
 const environmentToneMaxExposure = 32;
-const environmentTonePlateauStops = 0.2;
-const environmentToneKneeStops = 0.75;
+const environmentToneMaxBrightenExposure = 4;
+const environmentToneDimPlateauStops = 0.2;
+const environmentToneDimKneeStops = 0.75;
+const environmentToneBrightenPlateauStops = 0.75;
+const environmentToneBrightenKneeStops = 1.5;
 const environmentToneHighlightStartStops = 1.5;
 const environmentToneHighlightEndStops = 3.0;
+const environmentToneHighlightMaskStart = 0.75;
+const environmentToneHighlightMaskEnd = 2.0;
 let activeDirectLight = {
   color: [1, 0.894474, 0.567234],
   direction: [0.514434, -0.479014, -0.711269],
@@ -659,7 +664,8 @@ fn fragmentMain(input: BackgroundVertexOutput) -> @location(0) vec4<f32> {
   let tanHalfFov = u_background.params.y;
   let intensity = u_background.params.z;
   let adaptiveExposure = u_background.toneParams.x;
-  let adaptiveStrength = clamp(u_background.toneParams.y, 0.0, 1.0);
+  let exposureStrength = clamp(u_background.toneParams.y, 0.0, 1.0);
+  let highlightStrength = clamp(u_background.toneParams.z, 0.0, 1.0);
   let direction = normalize(
     u_background.cameraForward.xyz +
     u_background.cameraRight.xyz * input.ndc.x * aspect * tanHalfFov +
@@ -669,6 +675,9 @@ fn fragmentMain(input: BackgroundVertexOutput) -> @location(0) vec4<f32> {
   let rotatedUv = vec2<f32>(fract(uv.x + 0.5), uv.y);
   let color = textureSampleLevel(u_envRadianceTexture, u_envRadianceSampler, rotatedUv, 0.0).rgb * intensity;
   var displayColor = max(color, vec3<f32>(0.0));
+  let highlightValue = max(max(displayColor.r, displayColor.g), displayColor.b);
+  let highlightMask = smoothstep(${environmentToneHighlightMaskStart.toFixed(2)}, ${environmentToneHighlightMaskEnd.toFixed(2)}, highlightValue);
+  let adaptiveStrength = max(exposureStrength, highlightStrength * highlightMask);
   if (adaptiveExposure > 0.0 && adaptiveStrength > 0.0) {
     let adaptedDisplayColor = mx_aces_tonemap(displayColor * adaptiveExposure);
     displayColor = mix(displayColor, adaptedDisplayColor, adaptiveStrength);
@@ -2535,6 +2544,7 @@ function getEnvironmentBackgroundTone() {
   if (!adaptiveEnvironmentToneEnabled || !drawEnvironment || !activeEnvironmentToneStats?.sampleCount) {
     return {
       exposure: 0,
+      exposureStrength: 0,
       highlightStrength: 0,
       rawExposure: 0,
       strength: 0,
@@ -2549,14 +2559,16 @@ function getEnvironmentBackgroundTone() {
   );
   const intensityCompensation = Math.max(envLightIntensity, 0.001);
   const rawExposure = environmentToneTargetP95 / (referenceLuminance * intensityCompensation);
-  const exposure = Math.min(
-    environmentToneMaxExposure,
-    Math.max(0.001, rawExposure),
-  );
+  const boundedExposure = Math.max(0.001, rawExposure);
+  const exposure = boundedExposure > 1
+    ? Math.min(environmentToneMaxExposure, environmentToneMaxBrightenExposure, boundedExposure)
+    : Math.min(environmentToneMaxExposure, boundedExposure);
   const stops = Math.log2(exposure);
+  const plateauStops = stops > 0 ? environmentToneBrightenPlateauStops : environmentToneDimPlateauStops;
+  const kneeStops = stops > 0 ? environmentToneBrightenKneeStops : environmentToneDimKneeStops;
   const exposureStrength = smoothstep(
-    environmentTonePlateauStops,
-    environmentTonePlateauStops + environmentToneKneeStops,
+    plateauStops,
+    plateauStops + kneeStops,
     Math.abs(stops),
   );
   const highlightRatio = Math.max(activeEnvironmentToneStats.p99, 0.0001) / referenceLuminance;
@@ -2569,6 +2581,7 @@ function getEnvironmentBackgroundTone() {
 
   return {
     exposure,
+    exposureStrength,
     highlightStrength,
     rawExposure,
     strength: Math.max(exposureStrength, highlightStrength),
@@ -2595,7 +2608,7 @@ function updateEnvironmentToneMetric() {
   const tone = getEnvironmentBackgroundTone();
   setMetric(
     'environmentTone',
-    `adaptive ${formatToneValue(tone.exposure)}x / blend ${Math.round(tone.strength * 100)}% / smooth view p95 ${formatToneValue(activeEnvironmentToneStats.p95)}`,
+    `adaptive ${formatToneValue(tone.exposure)}x / blend ${Math.round(tone.exposureStrength * 100)}% / hot ${Math.round(tone.highlightStrength * 100)}% / smooth view p95 ${formatToneValue(activeEnvironmentToneStats.p95)}`,
   );
 }
 
@@ -2643,7 +2656,7 @@ function renderEnvironmentToneDebug() {
 
   if (meta) {
     const tone = getEnvironmentBackgroundTone();
-    meta.textContent = `${source.width}x${source.height} / ${points.length} pts / ${formatToneValue(tone.exposure)}x / ${Math.round(tone.strength * 100)}%`;
+    meta.textContent = `${source.width}x${source.height} / ${points.length} pts / ${formatToneValue(tone.exposure)}x / ${Math.round(tone.exposureStrength * 100)}% / hot ${Math.round(tone.highlightStrength * 100)}%`;
   }
 }
 
@@ -3258,7 +3271,7 @@ function writeEnvironmentBackgroundUniforms(backgroundData, dimensions, cameraRi
   backgroundData.set([up[0], up[1], up[2], 0], 4);
   backgroundData.set([forward[0], forward[1], forward[2], 0], 8);
   backgroundData.set([aspect, Math.tan(cameraFov / 2), envLightIntensity, 0], 12);
-  backgroundData.set([tone.exposure, tone.strength, tone.highlightStrength, tone.stops], 16);
+  backgroundData.set([tone.exposure, tone.exposureStrength, tone.highlightStrength, tone.stops], 16);
 }
 
 function createPrivatePixelUniformData() {
