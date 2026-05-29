@@ -83,17 +83,20 @@ const environmentToneGoldenAngle = Math.PI * (3 - Math.sqrt(5));
 const environmentToneMapWidth = 128;
 const environmentToneMapHeight = 64;
 const environmentToneBlurPasses = 2;
-const environmentToneTargetP95 = 0.32;
+const environmentToneTargetReference = 0.1;
 const environmentToneMaxExposure = 32;
 const environmentToneMaxBrightenExposure = 4;
 const environmentToneDimPlateauStops = 0.2;
 const environmentToneDimKneeStops = 0.75;
-const environmentToneBrightenPlateauStops = 0.75;
-const environmentToneBrightenKneeStops = 1.5;
+const environmentToneBrightenPlateauStops = 1.25;
+const environmentToneBrightenKneeStops = 2.0;
 const environmentToneHighlightStartStops = 1.5;
 const environmentToneHighlightEndStops = 3.0;
 const environmentToneHighlightMaskStart = 0.75;
 const environmentToneHighlightMaskEnd = 2.0;
+const environmentToneLogLuminanceFloor = 0.00001;
+const environmentToneReferenceTrimLow = 0.2;
+const environmentToneReferenceTrimHigh = 0.8;
 let activeDirectLight = {
   color: [1, 0.894474, 0.567234],
   direction: [0.514434, -0.479014, -0.711269],
@@ -2321,6 +2324,7 @@ function createLuminanceStats(luminanceValues) {
   if (!luminanceValues.length) {
     return {
       average: 0,
+      exposureReference: 0,
       max: 0,
       p50: 0,
       p90: 0,
@@ -2335,9 +2339,24 @@ function createLuminanceStats(luminanceValues) {
   const percentile = value => luminanceValues[
     Math.min(luminanceValues.length - 1, Math.max(0, Math.floor((luminanceValues.length - 1) * value)))
   ];
+  const trimStart = Math.min(
+    luminanceValues.length - 1,
+    Math.max(0, Math.floor((luminanceValues.length - 1) * environmentToneReferenceTrimLow)),
+  );
+  const trimEnd = Math.min(
+    luminanceValues.length - 1,
+    Math.max(trimStart, Math.ceil((luminanceValues.length - 1) * environmentToneReferenceTrimHigh)),
+  );
+  let stopSum = 0;
+  let stopCount = 0;
+  for (let index = trimStart; index <= trimEnd; index++) {
+    stopSum += luminanceToStops(luminanceValues[index]);
+    stopCount++;
+  }
 
   return {
     average: sum / luminanceValues.length,
+    exposureReference: stopCount ? stopsToLuminance(stopSum / stopCount) : percentile(0.5),
     max: luminanceValues[luminanceValues.length - 1],
     p50: percentile(0.5),
     p90: percentile(0.9),
@@ -2356,10 +2375,18 @@ function getHdrPixelLuminance(hdr, x, y) {
   return Number.isFinite(luminance) && luminance > 0 ? luminance : 0;
 }
 
+function luminanceToStops(luminance) {
+  return Math.log2(Math.max(environmentToneLogLuminanceFloor, luminance));
+}
+
+function stopsToLuminance(stops) {
+  return 2 ** stops;
+}
+
 function createDownsampledEnvironmentToneMap(hdr) {
   const width = Math.min(environmentToneMapWidth, hdr.width);
   const height = Math.min(environmentToneMapHeight, hdr.height);
-  const luminance = new Float32Array(width * height);
+  const stops = new Float32Array(width * height);
 
   for (let y = 0; y < height; y++) {
     const sourceYStart = Math.floor(y * hdr.height / height);
@@ -2373,17 +2400,17 @@ function createDownsampledEnvironmentToneMap(hdr) {
       for (let sourceY = sourceYStart; sourceY < sourceYEnd; sourceY++) {
         const clampedY = Math.min(hdr.height - 1, sourceY);
         for (let sourceX = sourceXStart; sourceX < sourceXEnd; sourceX++) {
-          sum += getHdrPixelLuminance(hdr, Math.min(hdr.width - 1, sourceX), clampedY);
+          sum += luminanceToStops(getHdrPixelLuminance(hdr, Math.min(hdr.width - 1, sourceX), clampedY));
           count++;
         }
       }
 
-      luminance[y * width + x] = count ? sum / count : 0;
+      stops[y * width + x] = count ? sum / count : luminanceToStops(0);
     }
   }
 
   return {
-    data: luminance,
+    data: stops,
     height,
     width,
   };
@@ -2434,8 +2461,22 @@ function blurEnvironmentToneMap(source) {
   };
 }
 
+function convertEnvironmentToneStopsToLuminance(source) {
+  const luminance = new Float32Array(source.data.length);
+  for (let index = 0; index < source.data.length; index++) {
+    luminance[index] = stopsToLuminance(source.data[index]);
+  }
+  return {
+    data: luminance,
+    height: source.height,
+    width: source.width,
+  };
+}
+
 function createEnvironmentToneSource(hdr) {
-  return blurEnvironmentToneMap(createDownsampledEnvironmentToneMap(hdr));
+  const downsampledStops = createDownsampledEnvironmentToneMap(hdr);
+  const blurredStops = blurEnvironmentToneMap(downsampledStops);
+  return convertEnvironmentToneStopsToLuminance(blurredStops);
 }
 
 function createEnvironmentToneDebugImageData(source) {
@@ -2552,13 +2593,9 @@ function getEnvironmentBackgroundTone() {
     };
   }
 
-  const referenceLuminance = Math.max(
-    activeEnvironmentToneStats.p95,
-    activeEnvironmentToneStats.average,
-    0.0001,
-  );
+  const referenceLuminance = Math.max(activeEnvironmentToneStats.exposureReference, 0.0001);
   const intensityCompensation = Math.max(envLightIntensity, 0.001);
-  const rawExposure = environmentToneTargetP95 / (referenceLuminance * intensityCompensation);
+  const rawExposure = environmentToneTargetReference / (referenceLuminance * intensityCompensation);
   const boundedExposure = Math.max(0.001, rawExposure);
   const exposure = boundedExposure > 1
     ? Math.min(environmentToneMaxExposure, environmentToneMaxBrightenExposure, boundedExposure)
@@ -2608,7 +2645,7 @@ function updateEnvironmentToneMetric() {
   const tone = getEnvironmentBackgroundTone();
   setMetric(
     'environmentTone',
-    `adaptive ${formatToneValue(tone.exposure)}x / blend ${Math.round(tone.exposureStrength * 100)}% / hot ${Math.round(tone.highlightStrength * 100)}% / smooth view p95 ${formatToneValue(activeEnvironmentToneStats.p95)}`,
+    `adaptive ${formatToneValue(tone.exposure)}x / blend ${Math.round(tone.exposureStrength * 100)}% / hot ${Math.round(tone.highlightStrength * 100)}% / log ref ${formatToneValue(activeEnvironmentToneStats.exposureReference)} / p95 ${formatToneValue(activeEnvironmentToneStats.p95)}`,
   );
 }
 
