@@ -17,26 +17,32 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "build": "node ./scripts/build.mjs --lint --minify",
-    "serve": "node ./scripts/build.mjs --lint --sourcemap --watch --serve",
-    "serve:https": "ESP_DEV_CERT_NAME=$npm_package_config_esp_dev_cert_name npm run serve -- --host=0.0.0.0 --port=8443",
-    "dev": "npm run serve -- --proxy --launch",
-    "dev:https": "npm run serve:https -- --proxy --launch",
-    "vscode:build": "npm run build -- --vscode",
-    "vscode:debug": "npm run serve -- --vscode",
-    "vscode:debug:https": "npm run serve:https -- --vscode",
-    "cert:dev": "ESP_DEV_CERT_NAME=$npm_package_config_esp_dev_cert_name esp-generate-dev-cert",
-    "dump:shadergen": "node ./scripts/dump-materialx-shaders.mjs",
-    "inspect:payload": "node ./scripts/inspect-materialx-payload.mjs",
-    "inspect:shadergen": "node ./scripts/inspect-materialx-generators.mjs",
-    "lint": "eslint .",
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "verify:webgpu": "node ./scripts/verify-webgpu-direct.mjs",
     "bootstrap": "npm install && npm run setup:assets",
     "setup:assets": "node ./scripts/setup-materialx.mjs",
     "setup:materialx": "node ./scripts/setup-materialx.mjs",
+
+    "build": "node ./scripts/build.mjs --lint --minify",
+    "serve": "node ./scripts/build.mjs --lint --sourcemap --watch --serve --debug-port=9222",
+    "serve:https": "ESP_DEV_CERT_NAME=$npm_package_config_esp_dev_cert_name npm run serve -- --host=0.0.0.0 --port=8443",
+
+    "dev": "npm run serve -- --proxy --launch",
+    "dev:https": "npm run serve:https -- --proxy --launch",
+
+    "vscode:build": "npm run build -- --vscode",
+    "vscode:debug": "npm run serve -- --vscode",
+    "vscode:debug:https": "npm run serve:https -- --vscode",
+
+    "dump:shadergen": "node ./scripts/dump-materialx-shaders.mjs",
+    "inspect:payload": "node ./scripts/inspect-materialx-payload.mjs",
+    "inspect:shadergen": "node ./scripts/inspect-materialx-generators.mjs",
     "spike:naga": "node ./scripts/spike-naga-materialx.mjs",
-    "verify:naga-wgsl": "node ./scripts/verify-naga-wgsl-browser.mjs"
+    "verify:naga-wgsl": "node ./scripts/verify-naga-wgsl-browser.mjs",
+    "verify:webgpu": "node ./scripts/verify-webgpu-direct.mjs",
+
+    "cert:dev": "ESP_DEV_CERT_NAME=$npm_package_config_esp_dev_cert_name esp-generate-dev-cert",
+    "lint": "eslint . --ignore-pattern 'dist'",
+
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "config": {
     "esp_dev_cert_name": "graysonlang-mxv-dev"
