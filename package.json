@@ -25,11 +25,13 @@
     "serve": "node ./scripts/build.mjs --lint --sourcemap --watch --serve --debug-port=9222",
     "serve:https": "ESP_DEV_CERT_NAME=$npm_package_config_esp_dev_cert_name npm run serve -- --host=0.0.0.0 --port=8443",
 
-    "dev": "npm run serve -- --proxy --launch",
+    "dev": "npm run serve -- --proxy --launch --chrome-arg=--remote-allow-origins=http://127.0.0.1:9292",
+    "dev:gpu:hud": "npm run dev & npm run gpu:hud",
     "dev:https": "npm run serve:https -- --proxy --launch",
 
     "vscode:build": "npm run build -- --vscode",
     "vscode:debug": "npm run serve -- --vscode",
+    "gpu:hud": "cdp-gpu-hud --attach=9222",
     "vscode:debug:https": "npm run serve:https -- --vscode",
 
     "dump:shadergen": "node ./scripts/dump-materialx-shaders.mjs",
@@ -48,14 +50,15 @@
     "esp_dev_cert_name": "graysonlang-mxv-dev"
   },
   "dependencies": {
+    "@graysonlang/esp": "^1.5.0",
     "@graysonlang/mx": "github:graysonlang/mx",
     "@graysonlang/naga": "github:graysonlang/naga",
-    "@graysonlang/esp": "^1.0.0",
     "fflate": "^0.8.3",
     "lil-gui": "^0.19.2",
     "three": "^0.183.2"
   },
   "devDependencies": {
+    "@graysonlang/cdp-gpu-probe": "^1.0.0",
     "@stylistic/eslint-plugin": "^5.10.0",
     "esbuild": "^0.28.0",
     "eslint": "^9.39.4"

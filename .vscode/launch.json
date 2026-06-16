@@ -7,7 +7,7 @@
       "request": "launch",
       "url": "http://localhost:8000",
       "port": 9222,
-      "runtimeArgs": ["--remote-allow-origins=http://localhost:8000"],
+      "runtimeArgs": ["--remote-allow-origins=http://127.0.0.1:9292"],
       "webRoot": "${workspaceFolder}/src",
       "preLaunchTask": "debug",
       "postDebugTask": "Kill debug server",
@@ -20,12 +20,28 @@
       "request": "launch",
       "url": "https://localhost:8443",
       "port": 9222,
-      "runtimeArgs": ["--remote-allow-origins=https://localhost:8443"],
+      "runtimeArgs": ["--remote-allow-origins=http://127.0.0.1:9292"],
       "webRoot": "${workspaceFolder}/src",
       "preLaunchTask": "debug:https",
       "postDebugTask": "Kill debug server",
       "sourceMaps": true,
       "outFiles": ["${workspaceFolder}/dist/main.mjs"]
+    },
+    {
+      "name": "GPU HUD (isolated)",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/node_modules/@graysonlang/cdp-gpu-probe/bin/cdp-gpu-hud.mjs",
+      "args": ["--attach=9222"],
+      "console": "internalConsole",
+      "internalConsoleOptions": "neverOpen"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Debug in Chrome + GPU HUD",
+      "configurations": ["Debug in Chrome", "GPU HUD (isolated)"],
+      "stopAll": true
     }
   ]
 }
