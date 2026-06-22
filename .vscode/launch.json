@@ -8,11 +8,12 @@
       "url": "http://localhost:8000",
       "port": 9222,
       "runtimeArgs": ["--remote-allow-origins=http://127.0.0.1:9292"],
-      "webRoot": "${workspaceFolder}/src",
+      "webRoot": "${workspaceFolder}",
+      "sourceMapPathOverrides": { "../*": "${workspaceFolder}/*" },
       "preLaunchTask": "debug",
       "postDebugTask": "Kill debug server",
       "sourceMaps": true,
-      "outFiles": ["${workspaceFolder}/dist/main.mjs"]
+      "outFiles": ["${workspaceFolder}/dist/*.js"]
     },
     {
       "name": "Debug in Chrome (https)",
@@ -21,11 +22,12 @@
       "url": "https://localhost:8443",
       "port": 9222,
       "runtimeArgs": ["--remote-allow-origins=http://127.0.0.1:9292"],
-      "webRoot": "${workspaceFolder}/src",
+      "webRoot": "${workspaceFolder}",
+      "sourceMapPathOverrides": { "../*": "${workspaceFolder}/*" },
       "preLaunchTask": "debug:https",
       "postDebugTask": "Kill debug server",
       "sourceMaps": true,
-      "outFiles": ["${workspaceFolder}/dist/main.mjs"]
+      "outFiles": ["${workspaceFolder}/dist/*.js"]
     },
     {
       "name": "GPU HUD (isolated)",
