@@ -22,6 +22,19 @@ const propertyGroups = [
     ],
   },
   {
+    id: 'flakes',
+    label: 'Flakes',
+    properties: [
+      { name: 'flakeWeight', label: 'Weight', max: 1, min: 0, step: 0.01 },
+      { name: 'flakeCoverage', label: 'Coverage', max: 2, min: 0, step: 0.01 },
+      { control: 'color', name: 'flakeColor', label: 'Color' },
+      { name: 'flakeScale', label: 'Scale', max: 1000, min: 1, step: 1 },
+      { name: 'flakeSize', label: 'Size', max: 4, min: 0.1, step: 0.01 },
+      { name: 'flakeRoughness', label: 'Roughness', max: 1, min: 0, step: 0.01 },
+      { name: 'flakeMetalness', label: 'Metalness', max: 1, min: 0, step: 0.01 },
+    ],
+  },
+  {
     id: 'transmission',
     label: 'Transmission',
     properties: [
@@ -78,6 +91,7 @@ const propertyGroups = [
     id: 'thin-film',
     label: 'Thin Film',
     properties: [
+      { name: 'iridescenceAmount', label: 'Amount', max: 1, min: 0, step: 0.01 },
       { name: 'thinFilmThickness', label: 'Thickness', max: 1200, min: 0, step: 1 },
       { name: 'thinFilmIor', label: 'IOR', max: 3, min: 1, step: 0.01 },
     ],

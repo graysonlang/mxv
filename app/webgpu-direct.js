@@ -48,6 +48,7 @@ const rendererModeLabels = {
 };
 const requestedShaderMode = queryParams.get('shader') || queryParams.get('shaderMode');
 let activeShaderMode = Object.hasOwn(shaderModeLabels, requestedShaderMode) ? requestedShaderMode : 'naga';
+let shaderModePreferenceLocked = Boolean(requestedShaderMode);
 const requestedRendererMode = (queryParams.get('renderer') || queryParams.get('renderMode') || 'auto').toLowerCase();
 let activeRendererMode = Object.hasOwn(rendererModeLabels, requestedRendererMode) ? requestedRendererMode : 'auto';
 const requestedMaterialSettings = queryParams.get('settings');
@@ -164,7 +165,26 @@ const materialPortIndex = {
   emissionColor: 36,
   opacity: 37,
   thinWalled: 38,
+  flakeWeight: 39,
+  flakeCoverage: 40,
+  flakeColor: 41,
+  flakeScale: 42,
+  flakeRoughness: 43,
+  flakeMetalness: 44,
+  iridescenceAmount: 45,
+  flakeSize: 46,
 };
+
+const bridgeOnlyMaterialPorts = new Set([
+  'flakeWeight',
+  'flakeCoverage',
+  'flakeColor',
+  'flakeScale',
+  'flakeRoughness',
+  'flakeMetalness',
+  'iridescenceAmount',
+  'flakeSize',
+]);
 
 const materialPortTypes = {
   base: 'float',
@@ -206,6 +226,14 @@ const materialPortTypes = {
   emissionColor: 'color3',
   opacity: 'color3',
   thinWalled: 'integer',
+  flakeWeight: 'float',
+  flakeCoverage: 'float',
+  flakeColor: 'color3',
+  flakeScale: 'float',
+  flakeRoughness: 'float',
+  flakeMetalness: 'float',
+  iridescenceAmount: 'float',
+  flakeSize: 'float',
 };
 
 const materialPortFields = {
@@ -248,6 +276,14 @@ const materialPortFields = {
   emissionColor: 'emission_color',
   opacity: 'opacity',
   thinWalled: 'thin_walled',
+  flakeWeight: 'flake_weight',
+  flakeCoverage: 'flake_coverage',
+  flakeColor: 'flake_color',
+  flakeScale: 'flake_scale',
+  flakeRoughness: 'flake_roughness',
+  flakeMetalness: 'flake_metalness',
+  iridescenceAmount: 'iridescence_amount',
+  flakeSize: 'flake_size',
 };
 
 const materialVariableAliases = {
@@ -261,6 +297,14 @@ const materialVariableAliases = {
   coat_rotation: 'coatRotation',
   diffuse_roughness: 'diffuseRoughness',
   emission_color: 'emissionColor',
+  flake_color: 'flakeColor',
+  flake_coverage: 'flakeCoverage',
+  flake_metalness: 'flakeMetalness',
+  flake_roughness: 'flakeRoughness',
+  flake_scale: 'flakeScale',
+  flake_size: 'flakeSize',
+  flake_weight: 'flakeWeight',
+  iridescence_amount: 'iridescenceAmount',
   sheen_color: 'sheenColor',
   sheen_roughness: 'sheenRoughness',
   specular_IOR: 'specularIor',
@@ -284,6 +328,8 @@ const materialVariableAliases = {
 };
 
 const materialUniformLayout = createMaterialUniformLayout();
+const generatedCompatibleMaterialPorts = materialUniformLayout.ports
+  .filter(port => !bridgeOnlyMaterialPorts.has(port.name));
 const publicUniformByteLength = materialUniformLayout.byteLength;
 const publicUniformStructSource = createPublicUniformStructSource();
 const materialAccessorSource = createMaterialAccessorSource();
@@ -315,24 +361,24 @@ const privatePixelUniformPorts = [
 ];
 const privatePixelTexturePorts = new Set(['u_envRadiance', 'u_envIrradiance']);
 const generatedPixelMainArguments = [
-  ...materialUniformLayout.ports
-    .slice(0, materialPortIndex.coatAffectColor)
+  ...generatedCompatibleMaterialPorts
+    .filter(port => port.index < materialPortIndex.coatAffectColor)
     .map(port => port.field),
   'geomprop_Nworld_out',
-  ...materialUniformLayout.ports
-    .slice(materialPortIndex.coatAffectColor)
+  ...generatedCompatibleMaterialPorts
+    .filter(port => port.index >= materialPortIndex.coatAffectColor)
     .map(port => port.field),
   'geomprop_Nworld_out',
   'geomprop_Tworld_out',
   'SR_standard_out',
 ];
 const generatedPixelFunctionParameters = [
-  ...materialUniformLayout.ports
-    .slice(0, materialPortIndex.coatAffectColor)
+  ...generatedCompatibleMaterialPorts
+    .filter(port => port.index < materialPortIndex.coatAffectColor)
     .map(port => port.field),
   'coat_normal',
-  ...materialUniformLayout.ports
-    .slice(materialPortIndex.coatAffectColor)
+  ...generatedCompatibleMaterialPorts
+    .filter(port => port.index >= materialPortIndex.coatAffectColor)
     .map(port => port.field),
   'normal',
   'tangent',
@@ -382,6 +428,14 @@ const baseMaterialPorts = {
   emissionColor: [1, 1, 1],
   opacity: [1, 1, 1],
   thinWalled: 0,
+  flakeWeight: 0,
+  flakeCoverage: 0.28,
+  flakeColor: [0.95, 0.98, 1],
+  flakeScale: 90,
+  flakeSize: 1,
+  flakeRoughness: 0.22,
+  flakeMetalness: 1,
+  iridescenceAmount: 0,
 };
 
 const fallbackMaterialSamples = {
@@ -411,6 +465,7 @@ const fallbackMaterialSamples = {
       subsurfaceColor: [1, 0.941, 0.847],
       subsurfaceRadius: [1, 0.851, 0.749],
       subsurfaceScale: 0.42,
+      iridescenceAmount: 1,
       thinFilmIor: 1.42,
       thinFilmThickness: 520,
       transmission: 0.08,
@@ -434,12 +489,22 @@ const fallbackMaterialSamples = {
   },
   carPaint: {
     label: 'Car Paint',
+    preferredShaderMode: 'bridge',
     ports: {
       ...baseMaterialPorts,
       base: 0.5,
       baseColor: [0.1037792, 0.59212029, 0.85064936],
       coat: 1,
+      coatAffectColor: 0.35,
       coatRoughness: 0,
+      flakeWeight: 0.74,
+      flakeCoverage: 0.48,
+      flakeColor: [0.92, 0.97, 1],
+      flakeScale: 120,
+      flakeSize: 1,
+      flakeRoughness: 0.24,
+      flakeMetalness: 1,
+      iridescenceAmount: 0.86,
       specular: 1,
       specularAnisotropy: 0.5,
       specularColor: [1, 1, 1],
@@ -532,6 +597,12 @@ const fallbackMaterialSamples = {
 let materialSamples = createFallbackMaterialSamples();
 const requestedMaterial = queryParams.get('material');
 let activeMaterialId = Object.hasOwn(materialSamples, requestedMaterial) ? requestedMaterial : 'standard';
+if (!shaderModePreferenceLocked) {
+  const preferredShaderMode = fallbackMaterialSamples[activeMaterialId]?.preferredShaderMode;
+  if (Object.hasOwn(shaderModeLabels, preferredShaderMode)) {
+    activeShaderMode = preferredShaderMode;
+  }
+}
 let materialSettingsDefaults = createMaterialSettingsDefaults(materialSamples);
 let pendingMaterialSwitch = null;
 let materialSwitchId = 0;
@@ -1005,6 +1076,13 @@ struct LightShader {
   direction: vec3<f32>,
 };
 
+struct BridgeFlake {
+  presence: f32,
+  sparkle: f32,
+  normal: vec3<f32>,
+  color: vec3<f32>,
+};
+
 fn numActiveLightSources() -> i32 {
   return min(u_privatePixel.u_numActiveLightSources, 1);
 }
@@ -1080,6 +1158,20 @@ fn mx_rotate_vector3(inputValue: vec3<f32>, amount: f32, axisValue: vec3<f32>) -
   return inputValue * c + cross(inputValue, axis) * s + axis * dot(axis, inputValue) * oc;
 }
 
+fn mx_bridge_tangent_from_normal(normal: vec3<f32>) -> vec3<f32> {
+  let N = normalize(normal);
+  var T = cross(vec3<f32>(0.0, 1.0, 0.0), N);
+  if (dot(T, T) < 0.0001) {
+    T = cross(vec3<f32>(0.0, 0.0, 1.0), N);
+  }
+  return normalize(T);
+}
+
+fn mx_bridge_tangent_frame_strength(normal: vec3<f32>) -> f32 {
+  let N = normalize(normal);
+  return smoothstep(0.04, 0.22, length(cross(vec3<f32>(0.0, 1.0, 0.0), N)));
+}
+
 fn mx_latlong_uv(direction: vec3<f32>) -> vec2<f32> {
   let transformedDirection = normalize((u_privatePixel.u_envMatrix * vec4<f32>(normalize(direction), 0.0)).xyz);
   let u = fract(atan2(transformedDirection.x, -transformedDirection.z) * 0.15915494309189535 + 0.5);
@@ -1112,11 +1204,107 @@ fn mx_bridge_specular_lobe(N: vec3<f32>, L: vec3<f32>, V: vec3<f32>, X: vec3<f32
   return clamp(D * G * NdotL / (4.0 * NdotV) * 0.35, 0.0, 1.5);
 }
 
-fn mx_bridge_thin_film_tint(thickness: f32, coatWeight: f32) -> vec3<f32> {
-  let strength = saturate(thickness / 700.0) * saturate(coatWeight);
-  let phase = vec3<f32>(0.0, 2.0943951, 4.1887902) + thickness * 0.018;
-  let tint = vec3<f32>(0.64) + 0.36 * cos(phase);
+fn mx_bridge_thin_film_tint(thicknessInput: f32, iorInput: f32, amountInput: f32, NdotV: f32) -> vec3<f32> {
+  let amount = saturate(amountInput);
+  let thickness = select(560.0, max(thicknessInput, 0.0), thicknessInput > 0.0);
+  let ior = clamp(iorInput, 1.0, 3.0);
+  let grazing = pow(1.0 - saturate(NdotV), 1.35);
+  let strength = amount * saturate(thickness / 700.0) * mix(0.62, 1.0, grazing);
+  let phaseScale = mix(0.72, 1.38, saturate((ior - 1.0) / 2.0));
+  let phase = vec3<f32>(0.0, 2.0943951, 4.1887902) + (thickness * phaseScale + grazing * 360.0) * 0.018;
+  let tint = vec3<f32>(0.58) + 0.42 * cos(phase);
   return vec3<f32>(1.0) * (1.0 - strength) + tint * strength;
+}
+
+fn mx_bridge_spectral_tint(phase: f32) -> vec3<f32> {
+  let hue = fract(phase);
+  let rgb = clamp(
+    abs(fract(hue + vec3<f32>(0.0, 0.6666667, 0.3333333)) * 6.0 - vec3<f32>(3.0)) - vec3<f32>(1.0),
+    vec3<f32>(0.0),
+    vec3<f32>(1.0)
+  );
+  let smoothRgb = rgb * rgb * (vec3<f32>(3.0) - 2.0 * rgb);
+  return vec3<f32>(0.16) + smoothRgb * 1.45;
+}
+
+fn mx_bridge_flake_diffraction_tint(
+  thicknessInput: f32,
+  iorInput: f32,
+  amountInput: f32,
+  NdotV: f32,
+  tangentDotH: f32
+) -> vec3<f32> {
+  let amount = saturate(amountInput);
+  let thickness = select(560.0, max(thicknessInput, 0.0), thicknessInput > 0.0);
+  let ior = clamp(iorInput, 1.0, 3.0);
+  let iorPhase = mix(0.75, 1.65, saturate((ior - 1.0) / 2.0));
+  let grazingPhase = pow(1.0 - saturate(NdotV), 0.72) * 1.45;
+  let gratingPhase = tangentDotH * 1.35;
+  let thicknessPhase = thickness * 0.0022 * iorPhase;
+  let phase = thicknessPhase + grazingPhase + gratingPhase;
+  return mix(vec3<f32>(1.0), mx_bridge_spectral_tint(phase), amount);
+}
+
+fn mx_bridge_hash31(value: vec3<f32>) -> f32 {
+  return fract(sin(dot(value, vec3<f32>(127.1, 311.7, 74.7))) * 43758.5453123);
+}
+
+fn mx_bridge_hash33(value: vec3<f32>) -> vec3<f32> {
+  return vec3<f32>(
+    mx_bridge_hash31(value + vec3<f32>(0.0, 0.0, 0.0)),
+    mx_bridge_hash31(value + vec3<f32>(19.19, 3.17, 41.73)),
+    mx_bridge_hash31(value + vec3<f32>(7.13, 23.71, 11.91))
+  );
+}
+
+fn mx_bridge_flake(
+  position: vec3<f32>,
+  normal: vec3<f32>,
+  tangent: vec3<f32>,
+  coverageInput: f32,
+  scaleInput: f32,
+  sizeInput: f32,
+  roughnessInput: f32,
+  weightInput: f32,
+  colorInput: vec3<f32>
+) -> BridgeFlake {
+  let coverageDensity = max(coverageInput, 0.0);
+  let coverage = saturate(coverageDensity);
+  let size = clamp(sizeInput, 0.1, 4.0);
+  let weight = saturate(weightInput);
+  let roughness = saturate(roughnessInput);
+  let N = normalize(normal);
+  var T = tangent - dot(tangent, N) * N;
+  if (length(T) < 0.0001) {
+    var helper = vec3<f32>(0.0, 1.0, 0.0);
+    if (abs(N.y) > 0.92) {
+      helper = vec3<f32>(1.0, 0.0, 0.0);
+    }
+    T = cross(helper, N);
+  }
+  T = normalize(T);
+  let flakePosition = position * max(scaleInput, 1.0);
+  let cell = floor(flakePosition);
+  let local = fract(flakePosition) - vec3<f32>(0.5);
+  let randomValue = mx_bridge_hash33(cell);
+  let center = randomValue - vec3<f32>(0.5);
+  let radius = min((mix(0.05, 0.38, sqrt(coverage)) + saturate(coverageDensity - 1.0) * 0.24) * size, 0.95);
+  let coreRadius = max(radius * 0.28, 0.018);
+  let softFlakeShape = 1.0 - smoothstep(coreRadius, radius, length(local - center));
+  let flakeShape = smoothstep(0.38, 1.0, softFlakeShape);
+  let densityGate = select(0.0, 1.0, randomValue.z < coverage);
+  let presence = saturate(flakeShape * densityGate * weight);
+  var tiltDirection = normalize(randomValue * 2.0 - vec3<f32>(1.0));
+  tiltDirection = tiltDirection - dot(tiltDirection, N) * N;
+  if (length(tiltDirection) < 0.0001) {
+    tiltDirection = T;
+  }
+  tiltDirection = normalize(tiltDirection);
+  let tilt = mix(0.04, 0.72, roughness) * presence;
+  let flakeNormal = normalize(N + tiltDirection * tilt);
+  let sparkle = mix(0.65, 1.75, randomValue.y);
+  let flakeColor = max(colorInput, vec3<f32>(0.0)) * mix(0.75, 1.25, randomValue.x);
+  return BridgeFlake(presence, sparkle, flakeNormal, flakeColor);
 }
 
 fn mx_oren_nayar_diffuse(NdotV: f32, NdotL: f32, LdotV: f32, roughness: f32) -> f32 {
@@ -1131,18 +1319,47 @@ fn mx_oren_nayar_diffuse(NdotV: f32, NdotL: f32, LdotV: f32, roughness: f32) -> 
 fn ${generatedStandardSurfaceFunctionName}(
 ${parameters}
 ) -> SurfaceShader {
-  let shadingNormal = normalize(normal);
-  let shadingTangent = normalize(tangent);
+  let baseNormal = normalize(normal);
+  let shadingTangent = mx_bridge_tangent_from_normal(baseNormal);
+  let flakeWeight = saturate(flake_weight);
+  let flake = mx_bridge_flake(
+    position_world,
+    baseNormal,
+    shadingTangent,
+    flake_coverage,
+    flake_scale,
+    flake_size,
+    flake_roughness,
+    flakeWeight,
+    flake_color
+  );
+  let shadingNormal = normalize(mix(baseNormal, flake.normal, flake.presence));
   let viewDirection = normalize(u_privatePixel.u_viewPosition - position_world);
   let lightShader = sampleLightSource(position_world);
   let lightDirection = lightShader.direction;
   let halfVector = normalize(lightDirection + viewDirection);
+  let tangentFrameStrength = mx_bridge_tangent_frame_strength(baseNormal);
+  let specularAnisotropy = specular_anisotropy * tangentFrameStrength;
+  let coatAnisotropy = coat_anisotropy * tangentFrameStrength;
   let coatTangent = mx_rotate_vector3(shadingTangent, coat_rotation * 360.0, coat_normal);
   let rotatedMainTangent = mx_rotate_vector3(shadingTangent, specular_rotation * 360.0, shadingNormal);
-  let mainTangent = select(shadingTangent, rotatedMainTangent, specular_anisotropy > 0.0);
-  let baseColor = max(base_color * base, vec3<f32>(0.0));
+  let mainTangent = select(shadingTangent, rotatedMainTangent, specularAnisotropy > 0.0);
+  let thinFilmThickness = max(thin_film_thickness, 0.0);
+  let iridescenceAmount = saturate(iridescence_amount);
+  let flakeNdotV = saturate(dot(flake.normal, viewDirection));
+  let flakeTdotH = dot(mainTangent, halfVector);
+  let flakeDiffraction = mx_bridge_flake_diffraction_tint(
+    thinFilmThickness,
+    thin_film_IOR,
+    iridescenceAmount,
+    flakeNdotV,
+    flakeTdotH
+  );
+  let diffractedFlakeColor = flake.color * flakeDiffraction;
+  let flakeUndercoatPresence = flake.presence * flake.presence;
+  let baseColor = mix(max(base_color * base, vec3<f32>(0.0)), flake.color, flakeUndercoatPresence * 0.32);
   let diffuseRoughness = saturate(diffuse_roughness);
-  let metalnessWeight = saturate(metalness);
+  let metalnessWeight = saturate(mix(metalness, flake_metalness, flakeUndercoatPresence));
   let specularWeight = saturate(specular);
   let specularColor = max(specular_color, vec3<f32>(0.0));
   let specularRoughness = clamp(specular_roughness, 0.04, 1.0);
@@ -1160,7 +1377,6 @@ ${parameters}
   let coatIor = max(coat_IOR, 1.01);
   let coatAffectColor = saturate(coat_affect_color);
   let coatAffectRoughness = saturate(coat_affect_roughness);
-  let thinFilmThickness = max(thin_film_thickness, 0.0);
   let emissionWeight = max(emission, 0.0);
   let emissionColor = max(emission_color, vec3<f32>(0.0));
   let surfaceOpacity = saturate(mx_luminance_color3(opacity, vec3<f32>(0.272229, 0.674082, 0.053689)).x);
@@ -1175,28 +1391,46 @@ ${parameters}
   let directMask = max(activeLightCount, 1.0);
   let transmissionMix = transmissionWeight * 0.35;
   let diffuseColor = baseColor * (1.0 - transmissionMix) + transmissionColor * transmissionMix;
+  let coatF0 = vec3<f32>(mx_ior_to_f0(coatIor)) * coatColor;
+  let film = mx_bridge_thin_film_tint(thinFilmThickness, thin_film_IOR, iridescenceAmount, nDotV);
+  let coatViewFresnel = mx_fresnel_schlick(nDotV, coatF0) * coatWeight;
+  let coatTint = mix(vec3<f32>(1.0), max(coatColor * film, vec3<f32>(0.0)), coatWeight * coatAffectColor);
+  let underCoatTransmission = max((vec3<f32>(1.0) - coatViewFresnel * 0.65) * coatTint, vec3<f32>(0.0));
   let coatGamma = 1.0 + coatWeight * coatAffectColor;
-  let coatAffectedDiffuse = pow(max(diffuseColor, vec3<f32>(0.0)), vec3<f32>(coatGamma));
+  let coatAffectedDiffuse = pow(max(diffuseColor * underCoatTransmission, vec3<f32>(0.0)), vec3<f32>(coatGamma));
   let diffuseResponse = mx_oren_nayar_diffuse(nDotV, nDotL, lDotV, diffuseRoughness);
   let diffuseLight = vec3<f32>(0.12) + lightShader.intensity * (nDotL * diffuseResponse * mix(0.82, 0.58, diffuseRoughness) * directMask) + irradiance * 0.28;
   let diffuse = coatAffectedDiffuse * diffuseLight * (1.0 - metalnessWeight);
   let dielectricF0 = vec3<f32>(mx_ior_to_f0(specularIor)) * specularColor * specularWeight;
   let f0 = dielectricF0 * (1.0 - metalnessWeight) + baseColor * metalnessWeight;
   let specularFresnel = mx_fresnel_schlick(vDotH, f0);
-  let mainRoughness = mx_roughness_anisotropy(mix(specularRoughness, 1.0, coatWeight * coatAffectRoughness), specular_anisotropy);
+  let mainRoughness = mx_roughness_anisotropy(mix(specularRoughness, 1.0, coatWeight * coatAffectRoughness), specularAnisotropy);
   let specularTerm = mx_bridge_specular_lobe(shadingNormal, lightDirection, viewDirection, mainTangent, mainRoughness);
   let envSpecular = radiance * mx_fresnel_schlick(nDotV, f0) * mix(0.35, 0.08, specularRoughness);
-  let coatF0 = vec3<f32>(mx_ior_to_f0(coatIor)) * coatColor;
-  let film = mx_bridge_thin_film_tint(thinFilmThickness, coatWeight);
-  let coatRoughnessVector = mx_roughness_anisotropy(coatRoughness, coat_anisotropy);
+  let flakeRoughnessValue = clamp(mix(0.04, 0.36, saturate(flake_roughness)), 0.03, 1.0);
+  let flakeF0 = mix(f0, diffractedFlakeColor * saturate(flake_metalness), flake.presence);
+  let flakeTerm = flake.presence
+    * mx_bridge_specular_lobe(flake.normal, lightDirection, viewDirection, mainTangent, vec2<f32>(flakeRoughnessValue))
+    * mx_fresnel_schlick(vDotH, flakeF0)
+    * flake.sparkle
+    * flakeDiffraction
+    * mix(1.0, 1.85, iridescenceAmount);
+  let flakeEnv = mx_sample_environment_radiance(reflect(-viewDirection, flake.normal), flakeRoughnessValue)
+    * mx_fresnel_schlick(saturate(dot(flake.normal, viewDirection)), flakeF0)
+    * flakeDiffraction
+    * flake.presence
+    * mix(0.18, 0.34, iridescenceAmount);
+  let coatRoughnessVector = mx_roughness_anisotropy(coatRoughness, coatAnisotropy);
   let coatTerm = coatWeight * mx_bridge_specular_lobe(coat_normal, lightDirection, viewDirection, coatTangent, coatRoughnessVector) * mx_fresnel_schlick(vDotH, coatF0) * film;
   let sheenTerm = sheenWeight * sheenColor * pow(1.0 - nDotV, mix(6.0, 1.4, sheenRoughness)) * 0.32;
   let subsurfaceTerm = subsurfaceWeight * subsurfaceColor * (0.1 + 0.42 * pow(1.0 - nDotV, 2.0));
-  let tangentGlint = vec3<f32>(pow(tDotH, 36.0)) * coatWeight * film * 0.06;
+  let tangentGlint = vec3<f32>(pow(tDotH, 36.0)) * coatWeight * film * 0.06 * tangentFrameStrength;
   let emissionTerm = emissionWeight * emissionColor;
   let color = diffuse
-    + specularFresnel * specularTerm * lightShader.intensity * (0.45 + nDotL * 1.6)
-    + envSpecular
+    + underCoatTransmission * (specularFresnel * specularTerm * lightShader.intensity * (0.45 + nDotL * 1.6))
+    + underCoatTransmission * envSpecular
+    + underCoatTransmission * (flakeTerm * lightShader.intensity * (0.7 + nDotL * 1.1))
+    + underCoatTransmission * flakeEnv
     + coatTerm * lightShader.intensity * (0.8 + nDotL * 1.35)
     + sheenTerm
     + subsurfaceTerm
@@ -1240,6 +1474,7 @@ function createFallbackMaterialSamples() {
       id,
       {
         label: sample.label,
+        preferredShaderMode: sample.preferredShaderMode,
         ports: clonePorts(sample.ports),
         source: 'fallback',
       },
@@ -1532,7 +1767,7 @@ function getBlockPorts(block) {
 }
 
 function validateGeneratedPublicUniforms(generatedPorts, sampleId) {
-  const expected = materialUniformLayout.ports;
+  const expected = generatedCompatibleMaterialPorts;
   if (generatedPorts.length !== expected.length) {
     throw new Error(`Generated public uniform count changed for "${sampleId}": expected ${expected.length}, got ${generatedPorts.length}.`);
   }
@@ -1580,6 +1815,16 @@ function validateGeneratedPrivateUniforms(generatedPorts, sampleId) {
   }
 
   return generatedBufferPorts.length;
+}
+
+function isGeneratedPublicUniformsBridgeCompatible(generatedPorts) {
+  if (generatedPorts.length !== generatedCompatibleMaterialPorts.length) return false;
+
+  return generatedCompatibleMaterialPorts.every((expectedPort, index) => {
+    const generatedPort = generatedPorts[index];
+    return normalizeMaterialVariableName(generatedPort?.variable) === expectedPort.name
+      && generatedPort.type === expectedPort.type;
+  });
 }
 
 function countGeneratedFunctions(source) {
@@ -1791,7 +2036,7 @@ async function generateMaterialSample(mx, sampleId, lightRigXml, nagaTranslator)
   const ports = clonePorts(fallback.ports);
   const generatedPorts = getBlockPorts(publicUniforms);
   const textureBindings = extractTextureBindings(pixelSource, generatedPorts);
-  const bridgeCompatible = textureBindings.length === 0;
+  const bridgeCompatible = textureBindings.length === 0 && isGeneratedPublicUniformsBridgeCompatible(generatedPorts);
   const lightDataBinding = extractLightDataBinding(pixelSource);
   const shaderballAoBinding = createShaderballAoBindingPlan(textureBindings, lightDataBinding);
   if (bridgeCompatible) {
@@ -1818,6 +2063,7 @@ async function generateMaterialSample(mx, sampleId, lightRigXml, nagaTranslator)
     lightData,
     lightDataBinding,
     ports,
+    preferredShaderMode: fallback.preferredShaderMode,
     renderable: element.getNamePath(),
     shaderballAoBinding,
     source: 'shadergen',
@@ -3768,10 +4014,91 @@ function formatMaterialXValue(type, value) {
   return formatMaterialXNumber(value);
 }
 
-function getMaterialXExportPorts(sample) {
+function getMaterialXExportValue(sample, name, fallback) {
+  const value = sample.ports?.[name]
+    ?? sample.uniformValues?.[materialUniformLayout.byName[name]?.field]
+    ?? fallback;
+  return Array.isArray(value) ? [...value] : value;
+}
+
+function getMaterialXExportNumber(sample, name, fallback, min = Number.NEGATIVE_INFINITY, max = Number.POSITIVE_INFINITY) {
+  const value = Number(getMaterialXExportValue(sample, name, fallback));
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, value));
+}
+
+function isMaterialXFlakeExportEnabled(sample) {
+  return getMaterialXExportNumber(sample, 'flakeWeight', 0, 0, 1) > 0
+    && getMaterialXExportNumber(sample, 'flakeCoverage', 0, 0, 1) > 0;
+}
+
+function createMaterialXFlakeExportNodes(sample, nodeSuffix) {
+  const flakeNodeName = `NG_${nodeSuffix}_flake3d`;
+  const flakeMixName = `NG_${nodeSuffix}_flake_mix`;
+  const baseColorMixName = `NG_${nodeSuffix}_flake_base_color`;
+  const metalnessMixName = `NG_${nodeSuffix}_flake_metalness`;
+  const flakeWeight = getMaterialXExportNumber(sample, 'flakeWeight', 0, 0, 1);
+  const flakeCoverage = getMaterialXExportNumber(sample, 'flakeCoverage', 0, 0, 1);
+  const flakeScale = getMaterialXExportNumber(sample, 'flakeScale', 90, 1, 10000);
+  const flakeSizeScale = getMaterialXExportNumber(sample, 'flakeSize', 1, 0.1, 4);
+  const flakeSize = Math.min(1, Math.max(0.000001, flakeSizeScale / flakeScale));
+  const flakeRoughness = getMaterialXExportNumber(sample, 'flakeRoughness', 0.22, 0, 1);
+  const flakeMetalness = getMaterialXExportNumber(sample, 'flakeMetalness', 1, 0, 1);
+  const baseColor = getMaterialXExportValue(sample, 'baseColor', baseMaterialPorts.baseColor);
+  const metalness = getMaterialXExportNumber(sample, 'metalness', baseMaterialPorts.metalness, 0, 1);
+  const flakeColor = getMaterialXExportValue(sample, 'flakeColor', baseMaterialPorts.flakeColor);
+
+  return {
+    baseColorMixName,
+    flakeNodeName,
+    metalnessMixName,
+    source: `  <flake3d name="${escapeXml(flakeNodeName)}" type="multioutput">
+    <input name="coverage" type="float" value="${escapeXml(formatMaterialXValue('float', flakeCoverage))}" />
+    <input name="size" type="float" value="${escapeXml(formatMaterialXValue('float', flakeSize))}" />
+    <input name="roughness" type="float" value="${escapeXml(formatMaterialXValue('float', flakeRoughness))}" />
+    <output name="id" type="integer" />
+    <output name="presence" type="float" />
+    <output name="flakenormal" type="vector3" />
+  </flake3d>
+  <multiply name="${escapeXml(flakeMixName)}" type="float">
+    <input name="in1" type="float" output="presence" nodename="${escapeXml(flakeNodeName)}" />
+    <input name="in2" type="float" value="${escapeXml(formatMaterialXValue('float', flakeWeight))}" />
+  </multiply>
+  <mix name="${escapeXml(baseColorMixName)}" type="color3">
+    <input name="bg" type="color3" value="${escapeXml(formatMaterialXValue('color3', baseColor))}" />
+    <input name="fg" type="color3" value="${escapeXml(formatMaterialXValue('color3', flakeColor))}" />
+    <input name="mix" type="float" nodename="${escapeXml(flakeMixName)}" />
+  </mix>
+  <mix name="${escapeXml(metalnessMixName)}" type="float">
+    <input name="bg" type="float" value="${escapeXml(formatMaterialXValue('float', metalness))}" />
+    <input name="fg" type="float" value="${escapeXml(formatMaterialXValue('float', flakeMetalness))}" />
+    <input name="mix" type="float" nodename="${escapeXml(flakeMixName)}" />
+  </mix>`,
+  };
+}
+
+function getCanonicalMaterialXExportPorts(sample) {
+  return materialUniformLayout.ports
+    .filter(port => !bridgeOnlyMaterialPorts.has(port.name))
+    .map(port => ({
+      field: port.field,
+      name: port.name,
+      type: materialPortTypes[port.name] === 'integer' ? 'boolean' : materialPortTypes[port.name],
+      value: sample.ports?.[port.name] ?? sample.uniformValues?.[port.field],
+    }));
+}
+
+function getMaterialXExportPorts(sample, options = {}) {
+  if (options.preferCanonical) {
+    return getCanonicalMaterialXExportPorts(sample);
+  }
+
   if (sample.uniformLayout?.ports?.length) {
     return sample.uniformLayout.ports
-      .filter(port => port.type !== 'filename' && port.type !== 'string')
+      .filter(port => port.type !== 'filename'
+        && port.type !== 'string'
+        && materialPortTypes[port.name]
+        && !bridgeOnlyMaterialPorts.has(port.name))
       .map(port => ({
         field: port.field,
         name: port.name,
@@ -3780,12 +4107,7 @@ function getMaterialXExportPorts(sample) {
       }));
   }
 
-  return materialUniformLayout.ports.map(port => ({
-    field: port.field,
-    name: port.name,
-    type: materialPortTypes[port.name] === 'integer' ? 'boolean' : materialPortTypes[port.name],
-    value: sample.ports?.[port.name],
-  }));
+  return getCanonicalMaterialXExportPorts(sample);
 }
 
 function createMaterialXExportSource(materialId = activeMaterialId) {
@@ -3793,17 +4115,30 @@ function createMaterialXExportSource(materialId = activeMaterialId) {
   const nodeSuffix = sanitizeMaterialXIdentifier(materialId, 'material');
   const shaderName = `SR_${nodeSuffix}`;
   const materialName = `MAT_${nodeSuffix}`;
-  const inputs = getMaterialXExportPorts(sample)
+  const flakeExport = isMaterialXFlakeExportEnabled(sample)
+    ? createMaterialXFlakeExportNodes(sample, nodeSuffix)
+    : null;
+  const inputLines = getMaterialXExportPorts(sample, { preferCanonical: Boolean(flakeExport) })
     .filter(port => port.value !== undefined && port.value !== null)
     .map((port) => {
       const type = port.field === 'thin_walled' || port.name === 'thinWalled'
         ? 'boolean'
         : port.type;
+      if (flakeExport && port.field === 'base_color') {
+        return `    <input name="${escapeXml(port.field)}" type="${escapeXml(type)}" nodename="${escapeXml(flakeExport.baseColorMixName)}" />`;
+      }
+      if (flakeExport && port.field === 'metalness') {
+        return `    <input name="${escapeXml(port.field)}" type="${escapeXml(type)}" nodename="${escapeXml(flakeExport.metalnessMixName)}" />`;
+      }
       return `    <input name="${escapeXml(port.field)}" type="${escapeXml(type)}" value="${escapeXml(formatMaterialXValue(type, port.value))}" />`;
-    })
-    .join('\n');
+    });
+  if (flakeExport) {
+    inputLines.unshift(`    <input name="normal" type="vector3" output="flakenormal" nodename="${escapeXml(flakeExport.flakeNodeName)}" />`);
+  }
+  const graphNodes = flakeExport ? `${flakeExport.source}\n` : '';
+  const inputs = inputLines.join('\n');
 
-  return `<?xml version="1.0"?>\n<materialx version="1.39" colorspace="lin_rec709">\n  <standard_surface name="${escapeXml(shaderName)}" type="surfaceshader">\n${inputs}\n  </standard_surface>\n  <surfacematerial name="${escapeXml(materialName)}" type="material">\n    <input name="surfaceshader" type="surfaceshader" nodename="${escapeXml(shaderName)}" />\n  </surfacematerial>\n</materialx>\n`;
+  return `<?xml version="1.0"?>\n<materialx version="1.39" colorspace="lin_rec709">\n${graphNodes}  <standard_surface name="${escapeXml(shaderName)}" type="surfaceshader">\n${inputs}\n  </standard_surface>\n  <surfacematerial name="${escapeXml(materialName)}" type="material">\n    <input name="surfaceshader" type="surfaceshader" nodename="${escapeXml(shaderName)}" />\n  </surfacematerial>\n</materialx>\n`;
 }
 
 async function exportMaterialXFile() {
@@ -3855,6 +4190,28 @@ async function applyMaterialSettings(settings, controls, options = {}) {
   setStatus(status);
 }
 
+function updateShaderModeSelectValue() {
+  const select = document.getElementById('shader-mode');
+  if (select) select.value = activeShaderMode;
+}
+
+function applyMaterialPreferredShaderMode(materialId, options = {}) {
+  if (shaderModePreferenceLocked) return false;
+
+  const sample = materialSamples[materialId] || materialSamples.standard;
+  const preferredShaderMode = sample?.preferredShaderMode || 'naga';
+  if (!Object.hasOwn(shaderModeLabels, preferredShaderMode) || activeShaderMode === preferredShaderMode) {
+    return false;
+  }
+
+  activeShaderMode = preferredShaderMode;
+  updateShaderModeSelectValue();
+  if (options.updateUrl) {
+    updateQueryParam('shader', activeShaderMode);
+  }
+  return true;
+}
+
 function bindShaderModeSelect(onModeChanged) {
   const select = document.getElementById('shader-mode');
   if (!select) {
@@ -3864,10 +4221,11 @@ function bindShaderModeSelect(onModeChanged) {
   }
 
   const refresh = () => {
-    select.value = activeShaderMode;
+    updateShaderModeSelectValue();
   };
 
   select.addEventListener('change', () => {
+    shaderModePreferenceLocked = true;
     activeShaderMode = Object.hasOwn(shaderModeLabels, select.value) ? select.value : 'naga';
     updateQueryParam('shader', activeShaderMode);
     const result = onModeChanged?.(activeShaderMode);
@@ -4436,7 +4794,10 @@ function bindMaterialSelect(device, publicUniformBuffer, publicUniformData, opti
     const uploadStart = performance.now();
     activeMaterialId = materialId;
     select.value = activeMaterialId;
-    const sample = writeMaterialUniforms(publicUniformData, activeMaterialId);
+    const shaderModeChanged = applyMaterialPreferredShaderMode(activeMaterialId, { updateUrl });
+    const sample = writeMaterialUniforms(publicUniformData, activeMaterialId, {
+      shaderMode: activeShaderMode,
+    });
     device.queue.writeBuffer(publicUniformBuffer, 0, publicUniformData.bytes);
     setMetric('materialUpload', formatDuration(performance.now() - uploadStart));
     setMetric('material', `${sample.label} (${sample.source})`);
@@ -4446,7 +4807,10 @@ function bindMaterialSelect(device, publicUniformBuffer, publicUniformData, opti
     setMetric('contract', sample.source === 'shadergen' && activeShaderMode === 'naga'
       ? describeBindingContract(sample)
       : `bindings 0-7 / ${privatePixelUniformPorts.length} private ports / ${privatePixelByteLength} B`);
-    const callbackResult = onMaterialApplied?.(activeMaterialId, sample, options);
+    const callbackResult = onMaterialApplied?.(activeMaterialId, sample, {
+      ...options,
+      shaderModeChanged,
+    });
     let handledCallbackResult = callbackResult;
     if (callbackResult && typeof callbackResult.catch === 'function') {
       handledCallbackResult = callbackResult.catch((error) => {
@@ -4796,6 +5160,12 @@ async function main() {
   const materialControl = bindMaterialSelect(device, publicUniformBuffer, publicUniformData, {
     onMaterialApplied: (materialId, sample, options = {}) => {
       materialPropertiesControl.refresh();
+      if (options.shaderModeChanged) {
+        return applyPipelineForShaderMode(materialId, {
+          requireShadergen: activeShaderMode === 'naga',
+          switchReason: options.measure ? 'material' : 'refresh',
+        });
+      }
       if (activeShaderMode !== 'naga' || sample.source !== 'shadergen') return null;
       return applyPipelineForShaderMode(materialId, {
         requireShadergen: true,
